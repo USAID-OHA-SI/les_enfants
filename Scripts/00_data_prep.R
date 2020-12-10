@@ -42,16 +42,15 @@
   
 # LOAD & MUNGE MSD --------------------------------------------------------
 
-  #TODO: @Achafetz -- this may need to be modified based on 1st run or not given what read_msd does
-  return_latest(datim_path, "Site_IM.*Zambia") %>% unzip(., exdir = datim_path)
-  zmb_msd <- return_latest(datim_path, "Site_IM.*Zambia")
+  zmb_msd <- return_latest(si_path(), "Site_IM.*Zambia")
   
+  # @essam import/first time handled in 99_data_import (read_msd)
   msd <- read_msd(zmb_msd)
 
   # Subset to only select indicators
   msd <- msd %>% 
-    filter(indicator %in% indic_list) %>% 
-    mutate(fundingagency = if_else(fundingagency == "HHS/CDC", "CDC", fundingagency))
+    filter(indicator %in% indic_list) %>%
+    clean_agency()
     
   # Check on different breakdowns across types of filters 
   # Sites with targets only - 
@@ -82,6 +81,3 @@
 
 
 # AGGREGATE TARGETS / RESULTS & CREATE SHARES -----------------------------
-
-  
-  
