@@ -1,5 +1,5 @@
 # PURPOSE: TX_NET_NEW Analysis focused on PEDS
-# COLLABORATOR: T Essam | A Chafetz | B kagniniwa
+# COLLABORATOR: T Essam | A Chafetz | B Kagniniwa
 # DATE: 2020-12-09
 # NOTES: BASED ON REQUEST FROM ZAMBIA SI LEAD
 
@@ -17,12 +17,7 @@
 
   # indicators of focus
   indic_list <- c("TX_CURR", "TX_NET_NEW", "TX_NEW") 
-  
-  # Paths
-  datim_path <- "../../DATIM_DATA/"
-  dataout <- "Dataout"
-  gispath <- "../../GEODATA"
-  
+
   
   # FUNCTIONS
   # Return a distinct count of a filtered data frame to check numbers
