@@ -33,10 +33,76 @@
       spread(fundingagency, n)
   }
   
+<<<<<<< HEAD
+=======
+  #' @title Distribution of Site / TX_CURR Share
+  #' 
+  #' @param df_tx
+  #' @param indicator Indicator name
+  #' @param exclude_na Exclude sites with NA results/targets
+  #' @param share_level Share levels: psnu, snu1 or null for country
+  #' @return TX_CURR Results Achievements
+  #' 
+  sites_share <- function(df_tx, 
+                              indicator = "TX_CURR",
+                              exclude_na = TRUE,
+                              share_level = "PSNU") {
+    # Filter indicators
+    df_tx <- df_tx %>% 
+      filter(indicator == {{indicator}},
+             standardizeddisaggregate == "Total Numerator")
+    
+    # Exclude results / targets with NA values
+    if (exclude_na == TRUE) {
+      
+      df_tx <- df_tx %>%
+        filter(!is.na(cumulative), !is.na(targets)) 
+    }
+    
+    # Select vars of interest
+    df_tx <- df_tx %>%  
+      select(fiscal_year, fundingagency, snu1uid, snu1, 
+             psnuuid, psnu, orgunituid, sitename, targets, 
+             results = cumulative, starts_with("qtr")) 
+    
+    # Identify share level
+    if (str_to_upper(share_level) == "PSNU") {
+      
+      df_tx <- df_tx %>% 
+        group_by(fiscal_year, fundingagency, snu1uid, snu1, psnuuid, psnu) 
+    }
+    else if (str_to_upper(share_level) == "SNU1") {
+      
+      df_tx <- df_tx %>% 
+        group_by(fiscal_year, fundingagency, snu1uid, snu1)
+    }
+    else {
+      df_tx <- df_tx %>% 
+        group_by(fiscal_year, fundingagency)
+    }
+      
+    # Calculate sites shares
+    df_tx <- df_tx %>%   
+      mutate(
+        targets_share = targets / sum(targets),
+        results_share = results / sum(results),
+        qtr1_share = qtr1 / sum(targets), 
+        qtr2_share = qtr2 / sum(targets), 
+        qtr3_share = qtr3 / sum(targets), 
+        qtr4_share = qtr4 / sum(targets) 
+      ) %>% 
+      pivot_longer(cols = starts_with(c("targ", "res", "qtr")), 
+                   names_to = "metric", 
+                   values_to = "val") 
+    
+    return(df_tx)
+  }
+>>>>>>> b9696ab89a589fb4697e53112a82d5739068400f
 
 # TASKS -------------------------------------------------------------------
 
   #1) Determine number of treatment sites (with results, with targets, with targets and results) 
+  
   #2) Determine the number of treatment sites with PEDs
   
   #3) What is the distribution of TX_CURR within the sites? (results / targets share)
@@ -287,3 +353,7 @@
     
       
 # AGGREGATE TARGETS / RESULTS & CREATE SHARES -----------------------------
+  
+  msd %>% 
+    sites_share() %>% View()
+    
