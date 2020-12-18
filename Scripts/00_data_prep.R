@@ -14,6 +14,7 @@
   library(gisr)
   library(scales)
   library(here)
+  library(gt)
   library(ggbeeswarm)
 
   graphics <- "Graphics"
@@ -124,7 +125,11 @@
   msd <- msd %>% 
     filter(indicator %in% indic_list) %>%
     clean_agency()
-    
+  
+  
+
+# EXPLORE DISTRIBUTION & COUNTS OF PEDS TREATMENT SITES -------------------
+
   # Check on different breakdowns across types of filters 
   # Sites with targets only - 
   msd %>% 
@@ -161,9 +166,7 @@
     gt() %>% 
     tab_options(table.font.names = "Source Sans Pro")  %>% 
     fmt_number(columns = c(3:4, 6:7), decimals = 0) %>% 
-    fmt_percent(columns = c(2,5), decimals = 0) 
-  
-  %>% 
+    fmt_percent(columns = c(2,5), decimals = 0) %>% 
   gtsave(here(graphics, "ZMB_peds_share_tx_sites.png"))
 
   # FOCUS ON MECHS NOW
@@ -177,6 +180,7 @@
     select(-`Local Treatment Partner`) %>% 
     mutate(tag = "all")
   
+  # What about for only peds?
   usaid_tx_count_peds <- msd %>% 
     filter(trendscoarse == "<15", !is.na(cumulative), indicator == "TX_CURR", fundingagency == "USAID") %>% 
     mutate(mech_name = if_else(str_detect(mech_name, "DISCOVER"), "DISCOVER-H", mech_name)) %>% 
@@ -185,6 +189,7 @@
     count(fiscal_year, mech_name, tag) %>% 
     spread(mech_name, n)
   
+  # Combining these, what do we get?
   rbind(usaid_tx_count, usaid_tx_count_peds) %>% 
     pivot_longer(cols = -c(fiscal_year, tag),
                  names_to = "mech", 
@@ -207,21 +212,14 @@
   
   si_save(here(graphics, "ZMB_share_tx_site_serving_peds"), scale = 1.25)
   
-  
-  left_join(usaid_tx_count, usaid_tx_count_peds)  %>%
-    mutate(`DISCOVER-H_share` = (`DISCOVER-H_peds`/`DISCOVER-H`),
-           EQUIP_share = (EQUIP_peds / EQUIP),
-           SAFE_share = (SAFE_peds/SAFE) 
-    ) %>% 
-  select(sort(peek_vars())) %>% 
-    select(fiscal_year, everything()) 
-  
   # Main Takeaways
   # The share of sites that are reporting TX_CURR peds results has been increasing year over year
   # Next step is to look at the volume of results by partner
 
 
 # PEDS VOLUME BY MECH_CODE  -----------------------------------------------
+  
+  # What do targets / achievements look like by mech by age band?
   tx_curr_mech_peds <- 
     msd %>% 
     filter(trendscoarse == "<15", !is.na(cumulative), indicator == "TX_CURR", fundingagency == "USAID", 
@@ -271,7 +269,7 @@
   si_save(here(graphics, "ZMB_tx_performance_by_partner_age_band"), scale = 1.66)
   
   
-  
+  # 
   tx_curr_mech_under15s <- 
     msd %>% 
     # filter(!is.na(cumulative), indicator == "TX_CURR", fundingagency == "USAID", standardizeddisaggregate == "Total Numerator") %>% 
@@ -281,7 +279,7 @@
     group_by(mech_code, mech_name, fiscal_year, indicator) %>% 
     summarise(TX_CURR = sum(cumulative, na.rm = TRUE))
   
-  # What does the composition of the mechs look like for under 15s? Is the mix of treament patients
+  # What does the composition of the mechs look like for under 15s? Is the mix of treatment patients
   # changing across time for each partner?
    tx_curr_mech_under15s %>% 
      left_join(., tx_curr_mech_peds) %>% 
@@ -295,7 +293,7 @@
     scale_color_si(palette = "siei")+
     labs(x = NULL, y = NULL,
          title = "THE AGE COMPOSITION OF TREATMENT HAS CHANGED LITTLE ACROSS FISCAL YEARS",
-         caption = source) 
+         caption = source) +
      theme(legend.position = "none")
   
    si_save(here(graphics, "ZMB_age_composition_tx_curr_by_partner"))
@@ -319,10 +317,11 @@
 # WHAT DOES THE DISTRIBUTION LOOK LIKE ACROSS SITES / PARNTERS? -----------
     set.seed(20201215)  
    msd %>% 
+     #filter(snu1 %in% c("Copperbelt Province", "Central Province")) %>% 
       filter(trendscoarse == "<15", !is.na(cumulative), indicator == "TX_CURR", fundingagency == "USAID", 
              standardizeddisaggregate == "Age/Sex/HIVStatus") %>% 
       mutate(mech_name = if_else(str_detect(mech_name, "DISCOVER"), "DISCOVER-H", mech_name)) %>% 
-      group_by(orgunituid, mech_name, fiscal_year, trendsfine) %>% 
+      group_by(orgunituid, mech_name, fiscal_year, trendsfine, snu1) %>% 
       summarise(tx_curr_peds = sum(cumulative, na.rm = TRUE),
                 targets = sum(targets, na.rm = TRUE)) %>% 
       ungroup() %>% 
@@ -333,22 +332,29 @@
              average = mean(tx_curr_peds)
              ) %>% 
       ungroup()%>% 
+     mutate(color_code = if_else(target_achieved == 0, "grey", mech_name)) %>% 
       ggplot(aes(x = mech_name, y = tx_curr_peds, color = mech_name)) +
-     geom_point(aes(y = maxval, colour = NA), ) +
-     geom_hline(aes(yintercept = average), color = grey30k, linetype = "dashed") +
-      geom_quasirandom(alpha = 0.5, method = "tukeyDense") +
-      facet_wrap(~trendsfine, scales = "free_x") +
-      si_style_ygrid() +
+     geom_point(aes(y = maxval, colour = NA)) +
+     geom_hline(aes(yintercept = average), color = grey40k, linetype = "dotted", size = 1) + 
+     geom_quasirandom(alpha = 0.75, method = "tukeyDense") +
+     #geom_quasirandom(data = . %>% filter(target_achieved == 0), alpha = 0.75, method = "tukeyDense") +
+     #geom_quasirandom(data = . %>% filter(target_achieved == 1), method = "tukeyDense") +
+      facet_wrap(~paste0(trendsfine, "\n"), scales = "free_y", nrow = 3) +
+     coord_flip() +
+     si_style_xgrid() +
       scale_color_si(palette = "siei", reverse = TRUE) +
+     #scale_color_manual(values = c("grey" = grey10k, "SAFE" = denim, "EQUIP" = burnt_sienna,
+                                   # "DISCOVER-H" = scooter)) +
       labs(x = NULL, y = "TX_CURR Achieved",
            title = "IN FY20, TREATMENT SITES SERVED AN AVERAGE OF ABOUT 16 PATIENTS PER SITE",
-           subtitle = "TX_CURR site level age band average depicted by dotted line.",
+           subtitle = "TX_CURR site level, age band average depicted by dotted line.",
            caption = source)  +
       scale_y_continuous(trans = log_trans(),
-                         breaks =c(1, 5, 10, 25, 50, 100, 300, 500))+
-     theme(legend.position = "none") 
+                         breaks =c(1, 5, 10, 15, 25, 50, 100, 300, 500)) +
+     theme(legend.position = "none",
+           axis.line.x = element_line(colour = color_gridline)) 
      
-   si_save(here(graphics, "ZMB_beeswarm_tx_curr_sitelevel"), scale = 1.3)
+   si_save(here(graphics, "ZMB_beeswarm_tx_curr_sitelevel_tgsachieved"), scale = 1.3)
     
     
 
