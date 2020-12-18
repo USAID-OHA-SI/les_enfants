@@ -22,6 +22,11 @@
 
   # indicators of focus
   indic_list <- c("TX_CURR", "TX_NET_NEW", "TX_NEW") 
+  
+  # Load credentials & project paths
+    glamr::si_path()
+  
+    glamr::load_secrets()
 
   
   # FUNCTIONS
@@ -47,9 +52,9 @@
   #' @return TX_CURR Results Achievements
   #' 
   sites_share <- function(df_tx, 
-                              indicator = "TX_CURR",
-                              exclude_na = TRUE,
-                              share_level = "PSNU") {
+                          indicator = "TX_CURR",
+                          exclude_na = TRUE,
+                          share_level = "PSNU") {
     # Filter indicators
     df_tx <- df_tx %>% 
       filter(indicator == {{indicator}},
@@ -57,7 +62,6 @@
     
     # Exclude results / targets with NA values
     if (exclude_na == TRUE) {
-      
       df_tx <- df_tx %>%
         filter(!is.na(cumulative), !is.na(targets)) 
     }
@@ -94,6 +98,7 @@
         qtr3_share = qtr3 / sum(targets), 
         qtr4_share = qtr4 / sum(targets) 
       ) %>% 
+      ungroup() %>% 
       pivot_longer(cols = starts_with(c("targ", "res", "qtr")), 
                    names_to = "metric", 
                    values_to = "val") 
@@ -101,6 +106,60 @@
     return(df_tx)
   }
 
+  
+  #' @title Treatment Sites location
+  #' 
+  #' @param df_msd reference df for TX_CURR Site x IM data
+  #' @param country Country/OU 
+  #' @param username Datim Passwork
+  #' @param password Datim Username
+  #' @param site_only return site only data, default = TRUE
+  #' @return sites with valide location data
+  #' 
+  tx_sites <- function(df_msd, 
+                       username = datim_user(), 
+                       password = datim_pwd(),
+                       peds_only = FALSE,
+                       site_only = TRUE) {
+    
+    # Check credentials
+    if (is.null(username) | is.null(password)) {
+      cat(Wavelength::paint_red("ERROR - Your datim credentials are not set."))
+      stop("Look into: glamr::set_datim()")
+    }
+    
+    # Extract sites location from datim
+    sites <- gisr::extract_locations(
+        country = "Zambia", 
+        username = username,
+        password = password
+      ) %>% 
+      extract_facilities() %>%
+      filter(!is.na(longitude) | !is.na(latitude)) %>%
+      select(orgunituid = id, longitude, latitude)
+    
+    # Merge locations to mer data & check for peds
+    if (peds_only == TRUE) {
+      sites <- df_msd %>%
+        dplyr::filter(indicator == "TX_CURR", trendscoarse == "<15") %>% 
+        dplyr::left_join(sites, by = "orgunituid")
+    } 
+    else {
+      sites <- df_msd %>%
+        dplyr::filter(indicator == "TX_CURR") %>% 
+        dplyr::left_join(sites, by = "orgunituid")
+    }
+    
+    # Keep site info only
+    if (site_only == TRUE) {
+      sites <- sites %>% 
+        dplyr::distinct(orgunituid, sitename, longitude, latitude)
+    }
+      
+    return(sites)
+  }
+  
+  
 
 # TASKS -------------------------------------------------------------------
 
@@ -126,11 +185,18 @@
     filter(indicator %in% indic_list) %>%
     clean_agency()
   
+
   
 
 # EXPLORE DISTRIBUTION & COUNTS OF PEDS TREATMENT SITES -------------------
 
-  # Check on different breakdowns across types of filters 
+  # Treatment Site locations
+  msd %>% tx_sites()
+  
+  # Treatment Site locations for peds 
+  msd %>% tx_sites(peds_only = TRUE)
+
+# Check on different breakdowns across types of filters 
   # Sites with targets only - 
   msd %>% 
     filter(standardizeddisaggregate == "Total Numerator", !is.na(targets), indicator == "TX_CURR") %>% 
@@ -316,6 +382,7 @@
 
 # WHAT DOES THE DISTRIBUTION LOOK LIKE ACROSS SITES / PARNTERS? -----------
     set.seed(20201215)  
+    
    msd %>% 
      #filter(snu1 %in% c("Copperbelt Province", "Central Province")) %>% 
       filter(trendscoarse == "<15", !is.na(cumulative), indicator == "TX_CURR", fundingagency == "USAID", 
@@ -362,6 +429,44 @@
       
 # AGGREGATE TARGETS / RESULTS & CREATE SHARES -----------------------------
   
+  # site results share by PSNU
+  msd %>% sites_share(share_level = "PSNU")
+  
   msd %>% 
-    sites_share() %>% View()
+    sites_share(share_level = "OU") %>% 
+    clean_psnu() %>%
+    filter(fiscal_year == 2020,
+           fundingagency == "USAID",
+           metric == "results_share") %>% 
+    select(snu1, psnu, sitename, val) %>% 
+    arrange(snu1, psnu, desc(val)) %>% 
+    View()
+  
+  # site results share by snu1
+  msd %>% sites_share(share_level = "SNU1") 
+  
+  msd %>% 
+    sites_share(share_level = "OU") %>% 
+    clean_psnu() %>%
+    filter(fiscal_year == 2020,
+           fundingagency == "USAID",
+           metric == "results_share") %>% 
+    select(snu1, sitename, val) %>% 
+    arrange(snu1, desc(val)) %>% 
+    View()
+  
+  # site results share by ou
+  msd %>% sites_share(share_level = "OU") 
+  
+  # Sites with at least 1% of the country's TX_CURR Results
+  msd %>% 
+    sites_share(share_level = "OU") %>% 
+    clean_psnu() %>%
+    filter(fiscal_year == 2020,
+           fundingagency == "USAID",
+           metric == "results_share",
+           val >= .01) %>% 
+    select(snu1, psnu, sitename, val) %>% 
+    arrange(desc(val)) %>% 
+    View()
     

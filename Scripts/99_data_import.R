@@ -1,5 +1,5 @@
 # PROJECT: les_enfants
-# AUTHORS: T Essam | A Chafetz | B kagniniwa
+# AUTHORS: T Essam | A Chafetz | B Kagniniwa
 # PURPOSE: TX_NET_NEW Analysis focused on PEDS
 # LICENSE: MIT
 # DATE:    2020-12-10
@@ -10,6 +10,7 @@
   library(dplyr)
   library(googledrive)
   library(glamr)
+  library(gisr)
   library(ICPIutilities)
 
 
