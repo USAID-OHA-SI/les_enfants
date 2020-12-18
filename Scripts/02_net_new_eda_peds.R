@@ -31,15 +31,15 @@
 # LOAD & MUNGE MSD --------------------------------------------------------
   
   # Read in MSD
-  zmb_msd <- return_latest(si_path(), "Site_IM.*Zambia")
+    zmb_msd <- return_latest(si_path(), "Site_IM.*Zambia")
   
   # @tessam import/first time handled in 99_data_import (read_msd)
-  msd <- read_msd(zmb_msd)
+   msd <- read_msd(zmb_msd)
   
   # Subset to only select indicators
-  msd <- msd %>% 
-    filter(indicator %in% indic_list) %>%
-    clean_agency()
+    msd <- msd %>% 
+      filter(indicator %in% indic_list) %>%
+      clean_agency()
   
   
   # Surge data to track priority sites
@@ -60,16 +60,16 @@
       distinct(orgunituid) 
   
   # Join MSD to surge data, flag peds focus sites with colors    
-    msd_surge <- 
-      msd %>% 
-      mutate(psnu = str_remove_all(psnu, " District"),
-             snu1 = str_remove_all(snu1, " Province")) %>% 
-      left_join(., surge_peds, 
-                by = c("sitename" = "Health Facility", 
-                       "psnu" = "District", 
-                       "snu1" = "Province")) %>% 
-      mutate(peds_focus = if_else((!is.na(peds_surge_site) | !is.na(peds_surge_ovc)), 
-                                  burnt_sienna, grey50k)) 
+      msd_surge <- 
+        msd %>% 
+        mutate(psnu = str_remove_all(psnu, " District"),
+               snu1 = str_remove_all(snu1, " Province")) %>% 
+        left_join(., surge_peds, 
+                  by = c("sitename" = "Health Facility", 
+                         "psnu" = "District", 
+                         "snu1" = "Province")) %>% 
+        mutate(peds_focus = if_else((!is.na(peds_surge_site) | !is.na(peds_surge_ovc)), 
+                                    burnt_sienna, grey50k)) 
 
   # Export a site X IM data set filtered to under 15s for TX_CURR and TX_NET_NEW
     msd_surge %>% 
@@ -90,41 +90,41 @@
   # May want to revisit this if we are batching this type of munging
     
 
-# REQUEST TO SEE TRENDS FOR FY20 ------------------------------------------
+# TRENDS FOR FY20 ------------------------------------------
  
    # What does partner performance look like over time?
-   msd_surge %>%
-      filter(
-        fiscal_year %in% c(2020), 
-        indicator == "TX_NET_NEW", 
-        trendscoarse == "<15", 
-        !is.na(cumulative),
-        fundingagency == "USAID",
-        standardizeddisaggregate == "Age/Sex/HIVStatus"
-      ) %>%
-      reshape_msd(clean = TRUE) %>%
-      filter(!(period %in% c("FY20"))) %>%
-      mutate(mech_name = if_else(str_detect(mech_name, "DISCOVER-H"), "DISCOVER-H", mech_name)) %>%
-      group_by(mech_name, period, mech_code, snu1) %>%
-      summarise(tx_net_new = sum(val, na.rm = TRUE)) %>%
-      ggplot(aes(factor(period), y = tx_net_new, group = mech_name, fill = mech_name)) +
-      geom_col() +
-      facet_grid(mech_name ~ snu1, scales = "free_y", switch = "y") +
-      si_style_ygrid() +
-      scale_fill_si(palette = "siei") +
-      theme(
-        strip.text.y.left = element_text(angle = 0),
-        strip.placement = "outside",
-        legend.position = "none"
-      ) +
-      labs(
-        x = NULL, y = NULL,
-        title = "TX_NET_NEW DECLINED SHARPLY FROM FY20Q1",
-        subtitle = "Figures do not accont for potential site shifts in Q1",
-        caption = source
-      )
+     msd_surge %>%
+        filter(
+          fiscal_year %in% c(2020), 
+          indicator == "TX_NET_NEW", 
+          trendscoarse == "<15", 
+          !is.na(cumulative),
+          fundingagency == "USAID",
+          standardizeddisaggregate == "Age/Sex/HIVStatus"
+        ) %>%
+        reshape_msd(clean = TRUE) %>%
+        filter(!(period %in% c("FY20"))) %>%
+        mutate(mech_name = if_else(str_detect(mech_name, "DISCOVER-H"), "DISCOVER-H", mech_name)) %>%
+        group_by(mech_name, period, mech_code, snu1) %>%
+        summarise(tx_net_new = sum(val, na.rm = TRUE)) %>%
+        ggplot(aes(factor(period), y = tx_net_new, group = mech_name, fill = mech_name)) +
+        geom_col() +
+        facet_grid(mech_name ~ snu1, scales = "free_y", switch = "y") +
+        si_style_ygrid() +
+        scale_fill_si(palette = "siei") +
+        theme(
+          strip.text.y.left = element_text(angle = 0),
+          strip.placement = "outside",
+          legend.position = "none"
+        ) +
+        labs(
+          x = NULL, y = NULL,
+          title = "TX_NET_NEW DECLINED SHARPLY FROM FY20Q1",
+          subtitle = "Figures do not accont for potential site shifts in Q1",
+          caption = source
+        )
   
-  si_save(here(graphics, "ZMB_TX_NET_NEW_by_mech"), scale = 1.5)
+    si_save(here(graphics, "ZMB_TX_NET_NEW_by_mech"), scale = 1.5)
   
   # What does partner performance look like over time for under 15s by site? and totals?
 
@@ -160,7 +160,8 @@
         ungroup() %>%
         mutate(psnusort = tidytext::reorder_within(psnu, val, snu1, sep = ":"))
     
-    # For plotting the bar graphs at the psnu level an setting snu1 colors - setting them here for consistency across plots    
+    # For plotting the bar graphs at the psnu level an setting snu1 colors - 
+    # setting them here for consistency across plots    
       tmp_mech_agg <-
         tmp %>%
         group_by(mech_name, period, mech_code, snu1, psnu) %>%
@@ -169,7 +170,7 @@
         mutate(snu1_colors = factor(snu1, labels = si_palettes$siei))
         
       
-    # Set jitter
+    # Set jitter for sites within bars
       jitter <- position_jitter(width = 0.2, height = 0.1)  
       
     # Bar plot with two layers of points jittered on top to show sites contribution to bar length  
@@ -211,8 +212,8 @@
         si_save(here(graphics, paste0("ZMB_",{{indicator}}, "_UNDER_15s_trends_", {{mech}})), scale = 1.6)
     }
    
-  # Retrive list of mechs to loop over  
-   mech_list <-  
+  # Retreive list of mechs to loop over  
+    mech_list <-  
      msd_surge %>% 
      filter(fiscal_year == "2020", 
             indicator %in% c("TX_NET_NEW"), 
@@ -221,6 +222,7 @@
      count(mech_name) %>% 
      pull(mech_name)
     
+  # Batch across mechanisms and by treatment indicators
     map(mech_list, ~site_bar_plots(msd_surge, "TX_CURR", .x))
     map(mech_list, ~site_bar_plots(msd_surge, "TX_NET_NEW", .x))
 
