@@ -12,6 +12,7 @@
   library(glitr)
   library(glamr)
   library(gisr)
+  library(gt)
   library(scales)
   library(here)
   library(ggbeeswarm)
@@ -66,10 +67,10 @@
     }
     
     # Select vars of interest
-    df_tx <- df_tx %>%  
-      select(fiscal_year, fundingagency, snu1uid, snu1, 
-             psnuuid, psnu, orgunituid, sitename, targets, 
-             results = cumulative, starts_with("qtr")) 
+    df_tx <- df_tx %>%
+      select(fiscal_year, fundingagency, snu1uid, snu1,
+             psnuuid, psnu, orgunituid, sitename, targets,
+             results = cumulative, starts_with("qtr"))
     
     # Identify share level
     if (str_to_upper(share_level) == "PSNU") {
@@ -104,7 +105,67 @@
     
     return(df_tx)
   }
-
+  
+  #' @title Site Performance
+  #' 
+  #' @param df_tx
+  #' @return TX_CURR Performance checks
+  #' 
+  sites_perf <- function(df_tx) {
+    
+    df_tx %>% 
+      sites_share() %>% 
+      pivot_wider(names_from = 'metric', 
+                  values_from = "val",
+                  values_fn = sum) %>%  #View()
+      rowwise() %>% 
+      mutate(
+        site_perf = if_else(results >= targets, 1, 0),
+        site_perf_qtr = case_when( # When did the site meet it's target?
+          site_perf == 1 & qtr1 >= targets ~ 1,
+          site_perf == 1 & qtr2 >= targets ~ 2,
+          site_perf == 1 & qtr3 >= targets ~ 3,
+          site_perf == 1 & qtr4 >= targets ~ 4,
+          TRUE ~ 0
+        ),
+        site_perf_loss = case_when( # When did the site missed to maintain target?
+          site_perf == 0 & qtr1 >= targets ~ 1,
+          site_perf == 0 & qtr2 >= targets ~ 2,
+          site_perf == 0 & qtr3 >= targets ~ 3,
+          site_perf == 0 & qtr4 >= targets ~ 4,
+          TRUE ~ 0
+        )
+      ) %>% 
+      ungroup() %>% 
+      group_by(fiscal_year, fundingagency, 
+               snu1uid, snu1, psnuuid, psnu) %>% 
+      mutate(
+        psnu_results = sum(results, na.rm = TRUE),
+        psnu_results_qtr1 = sum(qtr1, na.rm = TRUE),
+        psnu_results_qtr2 = sum(qtr2, na.rm = TRUE),
+        psnu_results_qtr3 = sum(qtr3, na.rm = TRUE),
+        psnu_results_qtr4 = sum(qtr4, na.rm = TRUE),
+        psnu_targets = sum(targets, na.rm = TRUE),
+        psnu_perf = if_else(psnu_results >= psnu_targets, 1, 0),
+        psnu_perf_qtr = case_when(
+          psnu_results_qtr1 >= psnu_targets ~ 1,
+          psnu_results_qtr2 >= psnu_targets ~ 2,
+          psnu_results_qtr3 >= psnu_targets ~ 3,
+          psnu_results_qtr4 >= psnu_targets ~ 4,
+          TRUE ~ 0
+        )
+      ) %>% 
+      ungroup() %>% 
+      mutate(site_outperf = case_when(
+          site_perf > psnu_perf ~ "YES",
+          site_perf < psnu_perf ~ "NO",
+          site_perf == 1 & site_perf == 1 ~ "YYES",
+          site_perf == 0 & psnu_perf == 0 ~ "NNO",
+          TRUE ~ NA_character_
+        )
+      ) 
+  }
+  
   
   #' @title Treatment Sites location
   #' 
@@ -423,28 +484,30 @@
   # site results share by PSNU
   msd %>% sites_share(share_level = "PSNU")
   
+  # Sites with at least 10% PSNU Results share
   msd %>% 
-    sites_share(share_level = "OU") %>% 
+    sites_share(share_level = "PSNU") %>% 
     clean_psnu() %>%
     filter(fiscal_year == 2020,
            fundingagency == "USAID",
            metric == "results_share") %>% 
     select(snu1, psnu, sitename, val) %>% 
-    arrange(snu1, psnu, desc(val)) %>% 
-    View()
+    arrange(snu1, psnu, desc(val)) %>%
+    filter(val >= .1) %>% 
+    prinf()
   
   # site results share by snu1
   msd %>% sites_share(share_level = "SNU1") 
   
   msd %>% 
-    sites_share(share_level = "OU") %>% 
+    sites_share(share_level = "SNU1") %>% 
     clean_psnu() %>%
     filter(fiscal_year == 2020,
            fundingagency == "USAID",
            metric == "results_share") %>% 
     select(snu1, sitename, val) %>% 
     arrange(snu1, desc(val)) %>% 
-    View()
+    prinf()
   
   # site results share by ou
   msd %>% sites_share(share_level = "OU") 
@@ -458,6 +521,44 @@
            metric == "results_share",
            val >= .01) %>% 
     select(snu1, psnu, sitename, val) %>% 
-    arrange(desc(val)) %>% 
-    View()
+    arrange(desc(val)) 
+  
+# PERFORMANCE - Identify High Performing Sites --------------
     
+  # Sites that met their targets
+  msd %>% 
+    sites_perf() %>% 
+    filter(site_perf == 1) %>% 
+    count(fiscal_year, fundingagency) %>% 
+    spread(fundingagency, n)
+  
+  # sites that met their target in Qn
+  msd %>% 
+    sites_perf() %>% 
+    filter(site_perf == 1) %>% 
+    count(fiscal_year, fundingagency, site_perf_qtr) %>% 
+    spread(fundingagency, n)
+  
+  # sites that could have met their targets [if not bc of patient loss]
+  msd %>% 
+    sites_perf() %>% 
+    filter(site_perf == 0, site_perf_loss == 1) %>% 
+    count(fiscal_year, fundingagency) %>% 
+    spread(fundingagency, n)
+  
+  # sites dragging psnu down
+  msd %>% 
+    sites_perf() %>% 
+    filter(site_outperf == "NNO") %>% 
+    count(fiscal_year, fundingagency) %>% 
+    spread(fundingagency, n)
+  
+  # sites lifting psnu up
+  msd %>% 
+    sites_perf() %>% 
+    filter(site_outperf == "YYES") %>% 
+    count(fiscal_year, fundingagency) %>% 
+    spread(fundingagency, n)
+
+      
+  
