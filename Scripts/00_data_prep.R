@@ -609,7 +609,7 @@
     filter(fundingagency == "USAID",
            fiscal_year == 2020,
            psnu == "Ndola District",
-           !is.na(site_perf), ) %>% #distinct(psnu) %>% pull()
+           !is.na(site_perf), ) %>% 
     mutate(site_perf = factor(site_perf, levels = c(1,0), labels = c("Yes", "No"))) %>% #distinct(site_perf)
     ggplot(aes(targets_share, results_share, fill = site_perf)) +
     geom_point(shape = 21, size = 5, color = "white", alpha = .6) +
