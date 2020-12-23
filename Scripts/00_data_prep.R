@@ -4,7 +4,7 @@
 # NOTES: BASED ON REQUEST FROM ZAMBIA SI LEAD
 
 
-# GLOBALS -----------------------------------------------------------------
+# LIBRARIES -----------------------------------------------------------------
 
   library(tidyverse)
   library(ICPIutilities)
@@ -17,19 +17,29 @@
   library(here)
   library(gt)
   library(ggbeeswarm)
+  library(extrafont)
 
+# GLOBALS -----------------------------------------------------------------
+
+  # Directories
     graphics <- "Graphics"
+    
+  # Output footnotes
     source <- "Source: FY20Q4 MSD"
 
   # indicators of focus
     indic_list <- c("TX_CURR", "TX_NET_NEW", "TX_NEW") 
+    
+  # Country
+    country <- "Zambia"
   
   # Load credentials & project paths
-    glamr::si_path()
-    glamr::load_secrets()
+    #glamr::si_path()
+    #glamr::load_secrets()
 
   
-  # FUNCTIONS
+# FUNCTIONS -------------------------------------------------------------
+
   # Return a distinct count of a filtered data frame to check numbers
   # Spread by funding agency
     distinct_count <- function(df) {
@@ -47,39 +57,30 @@
   #' 
   #' @param df_tx
   #' @param indicator Indicator name
-  #' @param exclude_na Exclude sites with NA results/targets
   #' @param share_level Share levels: psnu, snu1 or null for country
   #' @return TX_CURR Results Achievements
   #' 
   sites_share <- function(df_tx, 
                           indicator = "TX_CURR",
-                          exclude_na = TRUE,
                           share_level = "PSNU") {
     # Filter indicators
     df_tx <- df_tx %>% 
-      filter(indicator == {{indicator}},
-             standardizeddisaggregate == "Total Numerator")
-    
-    # Exclude results / targets with NA values
-    if (exclude_na == TRUE) {
-      df_tx <- df_tx %>%
-        filter(!is.na(cumulative), !is.na(targets)) 
-    }
-    
-    # Select vars of interest
-    df_tx <- df_tx %>%
-      select(fiscal_year, fundingagency, snu1uid, snu1,
+      filter(
+        str_to_lower(fundingagency) != "dedup",
+        str_to_lower(indicator) == str_to_lower({{indicator}}),                      # get specific indicator
+        standardizeddisaggregate == "Total Numerator",
+        !is.na(cumulative)                               # exclude sites with no cumulative results
+      ) %>%
+      select(fiscal_year, fundingagency, snu1uid, snu1,  # narrow down cols
              psnuuid, psnu, orgunituid, sitename, targets,
              results = cumulative, starts_with("qtr"))
     
-    # Identify share level
+    # Identify group level for sites share 
     if (str_to_upper(share_level) == "PSNU") {
-      
       df_tx <- df_tx %>% 
         group_by(fiscal_year, fundingagency, snu1uid, snu1, psnuuid, psnu) 
     }
     else if (str_to_upper(share_level) == "SNU1") {
-      
       df_tx <- df_tx %>% 
         group_by(fiscal_year, fundingagency, snu1uid, snu1)
     }
@@ -91,17 +92,17 @@
     # Calculate sites shares
     df_tx <- df_tx %>%   
       mutate(
-        targets_share = targets / sum(targets),
-        results_share = results / sum(results),
-        qtr1_share = qtr1 / sum(targets), 
-        qtr2_share = qtr2 / sum(targets), 
-        qtr3_share = qtr3 / sum(targets), 
-        qtr4_share = qtr4 / sum(targets) 
+        targets_share = targets / sum(targets, na.rm = TRUE),
+        results_share = results / sum(results, na.rm = TRUE),
+        qtr1_share = qtr1 / sum(qtr1, na.rm = TRUE), 
+        qtr2_share = qtr2 / sum(qtr2, na.rm = TRUE), 
+        qtr3_share = qtr3 / sum(qtr3, na.rm = TRUE), 
+        qtr4_share = qtr4 / sum(qtr4, na.rm = TRUE) 
       ) %>% 
       ungroup() %>% 
-      pivot_longer(cols = starts_with(c("targ", "res", "qtr")), 
+      pivot_longer(cols = starts_with(c("target", "result", "qtr")), 
                    names_to = "metric", 
-                   values_to = "val") 
+                   values_to = "val")
     
     return(df_tx)
   }
@@ -109,26 +110,31 @@
   #' @title Site Performance
   #' 
   #' @param df_tx
-  #' @return TX_CURR Performance checks
+  #' @param indicator
+  #' @param share_level
+  #' @return Site Indicator / Performance Checks
   #' 
-  sites_perf <- function(df_tx) {
+  sites_perf <- function(df_tx,
+                         indicator = "TX_CURR",
+                         share_level = "PSNU") {
     
     df_tx %>% 
-      sites_share() %>% 
+      sites_share(indicator = {{indicator}},
+                  share_level = {{share_level}}) %>% 
       pivot_wider(names_from = 'metric', 
                   values_from = "val",
-                  values_fn = sum) %>%  #View()
+                  values_fn = sum) %>%  
       rowwise() %>% 
       mutate(
-        site_perf = if_else(results >= targets, 1, 0),
-        site_perf_qtr = case_when( # When did the site meet it's target?
+        site_perf = if_else(results >= targets, 1, 0), # did site meet its target?
+        site_perf_qtr = case_when(                     # When did the site meet it's target?
           site_perf == 1 & qtr1 >= targets ~ 1,
           site_perf == 1 & qtr2 >= targets ~ 2,
           site_perf == 1 & qtr3 >= targets ~ 3,
           site_perf == 1 & qtr4 >= targets ~ 4,
           TRUE ~ 0
         ),
-        site_perf_loss = case_when( # When did the site missed to maintain target?
+        site_perf_loss = case_when(                   # When did the site missed to maintain perf?
           site_perf == 0 & qtr1 >= targets ~ 1,
           site_perf == 0 & qtr2 >= targets ~ 2,
           site_perf == 0 & qtr3 >= targets ~ 3,
@@ -139,24 +145,31 @@
       ungroup() %>% 
       group_by(fiscal_year, fundingagency, 
                snu1uid, snu1, psnuuid, psnu) %>% 
-      mutate(
+      mutate(                                                    # Summary PSNU Level Performance
         psnu_results = sum(results, na.rm = TRUE),
         psnu_results_qtr1 = sum(qtr1, na.rm = TRUE),
         psnu_results_qtr2 = sum(qtr2, na.rm = TRUE),
         psnu_results_qtr3 = sum(qtr3, na.rm = TRUE),
         psnu_results_qtr4 = sum(qtr4, na.rm = TRUE),
         psnu_targets = sum(targets, na.rm = TRUE),
-        psnu_perf = if_else(psnu_results >= psnu_targets, 1, 0),
-        psnu_perf_qtr = case_when(
+        psnu_perf = if_else(psnu_results >= psnu_targets, 1, 0), # did psnu meet its target?
+        psnu_perf_qtr = case_when(                               # When did the psnu meet it's target?
           psnu_results_qtr1 >= psnu_targets ~ 1,
           psnu_results_qtr2 >= psnu_targets ~ 2,
           psnu_results_qtr3 >= psnu_targets ~ 3,
           psnu_results_qtr4 >= psnu_targets ~ 4,
           TRUE ~ 0
+        ),
+        psnu_perf_loss = case_when(                              # When did psnu missed to maintain perf?
+          psnu_perf == 0 & psnu_results_qtr1 >= psnu_targets ~ 1,
+          psnu_perf == 0 & psnu_results_qtr2 >= psnu_targets ~ 2,
+          psnu_perf == 0 & psnu_results_qtr3 >= psnu_targets ~ 3,
+          psnu_perf == 0 & psnu_results_qtr4 >= psnu_targets ~ 4,
+          TRUE ~ 0
         )
       ) %>% 
       ungroup() %>% 
-      mutate(site_outperf = case_when(
+      mutate(site_outperf = case_when(                          # What are the sites doing better / worse then their parent psnu
           site_perf > psnu_perf ~ "YES",
           site_perf < psnu_perf ~ "NO",
           site_perf == 1 & site_perf == 1 ~ "YYES",
@@ -246,15 +259,27 @@
       clean_agency()
   
 
-  
-
 # EXPLORE DISTRIBUTION & COUNTS OF PEDS TREATMENT SITES -------------------
 
   # Treatment Site locations
-     msd %>% tx_sites()
+    df_tx_sites <- msd %>% 
+      tx_sites()
   
   # Treatment Site locations for peds 
-      msd %>% tx_sites(peds_only = TRUE)
+    #df_tx_sites <- msd %>% tx_sites(peds_only = TRUE) 
+    
+  # Country Basemap
+    basemap <- terrain_map(country, 
+                           terr_path = si_path("path_raster"),
+                           mask = TRUE) 
+    
+  # Country TX Facilities
+    basemap +
+      geom_point(data = df_tx_sites %>% filter(!is.na(longitude)),
+                 aes(longitude, latitude), shape = 21, size = 5,
+                 fill = grey40k, color = "white", alpha = .6) + 
+      si_style_map()
+      
 
 # Check on different breakdowns across types of filters 
   
@@ -517,43 +542,83 @@
   msd %>% 
     sites_share(share_level = "PSNU") %>% 
     clean_psnu() %>%
-    filter(fiscal_year == 2020,
-           fundingagency == "USAID",
-           metric == "results_share") %>% 
-    select(snu1, psnu, sitename, val) %>% 
-    arrange(snu1, psnu, desc(val)) %>%
+    filter(metric == "results_share") %>% 
     filter(val >= .1) %>% 
-    prinf()
+    count(fiscal_year, fundingagency) %>% 
+    spread(fundingagency, n)
   
-  # site results share by snu1
-  msd %>% sites_share(share_level = "SNU1") 
+  # Sites/psnu results share grouping
+  msd %>% 
+    sites_share(share_level = "PSNU") %>% 
+    clean_psnu() %>%
+    filter(metric == "results_share") %>%  
+    mutate(share = cut(val, breaks = seq(0, 1, .25))) %>% 
+    count(fiscal_year, fundingagency, share) %>% 
+    pivot_wider(names_from = fundingagency, values_from = n) %>% 
+    gt()
   
   msd %>% 
-    sites_share(share_level = "SNU1") %>% 
+    sites_share(share_level = "PSNU") %>% 
     clean_psnu() %>%
-    filter(fiscal_year == 2020,
-           fundingagency == "USAID",
+    filter(metric == "results_share") %>%  
+    mutate(share = cut(val, breaks = seq(0, 1, .1))) %>% 
+    count(fiscal_year, fundingagency, share) %>% 
+    pivot_wider(names_from = fundingagency, values_from = n) %>% 
+    gt()
+  
+  msd %>% 
+    sites_share(share_level = "PSNU") %>% 
+    clean_psnu() %>%
+    filter(fundingagency != 'DOD',
            metric == "results_share") %>% 
-    select(snu1, sitename, val) %>% 
-    arrange(snu1, desc(val)) %>% 
-    prinf()
+    ggplot(aes(x = fundingagency, y = val)) +
+    geom_boxplot() +
+    facet_wrap(~fiscal_year) +
+    coord_flip() +
+    si_style()
   
-  # site results share by ou
-  msd %>% sites_share(share_level = "OU") 
-  
-  # Sites with at least 1% of the country's TX_CURR Results
   msd %>% 
-    sites_share(share_level = "OU") %>% 
+    sites_share(share_level = "PSNU") %>% 
     clean_psnu() %>%
-    filter(fiscal_year == 2020,
-           fundingagency == "USAID",
-           metric == "results_share",
-           val >= .01) %>% 
-    select(snu1, psnu, sitename, val) %>% 
-    arrange(desc(val)) 
+    filter(fundingagency == 'USAID',
+           metric == "results_share") %>% 
+    ggplot(aes(y = val)) +
+    geom_boxplot() +
+    facet_grid(fiscal_year ~ .) +
+    coord_flip() +
+    si_style()
+  
   
 # PERFORMANCE - Identify High Performing Sites --------------
-    
+  
+  # Site results/targets shares & perf
+  msd %>% 
+    sites_perf() %>%
+    filter(!is.na(site_perf)) %>% 
+    mutate(site_perf = factor(site_perf, levels = c(1,0), labels = c("Yes", "No"))) %>% #distinct(site_perf)
+    ggplot(aes(targets_share, results_share, fill = site_perf)) +
+    geom_point(shape = 21, size = 5, color = "white", alpha = .6) +
+    scale_fill_manual(values = c(USAID_blue, USAID_dkred)) +
+    scale_x_continuous(labels = percent) +
+    scale_y_continuous(labels = percent) +
+    coord_equal() +
+    si_style()
+  
+  msd %>% 
+    sites_perf() %>% 
+    filter(fundingagency == "USAID",
+           fiscal_year == 2020,
+           psnu == "Ndola District",
+           !is.na(site_perf), ) %>% #distinct(psnu) %>% pull()
+    mutate(site_perf = factor(site_perf, levels = c(1,0), labels = c("Yes", "No"))) %>% #distinct(site_perf)
+    ggplot(aes(targets_share, results_share, fill = site_perf)) +
+    geom_point(shape = 21, size = 5, color = "white", alpha = .6) +
+    scale_fill_manual(values = c(USAID_blue, USAID_dkred)) +
+    scale_x_continuous(labels = percent) +
+    scale_y_continuous(labels = percent) +
+    coord_equal() +
+    si_style()
+  
   # Sites that met their targets
   msd %>% 
     sites_perf() %>% 
@@ -561,33 +626,74 @@
     count(fiscal_year, fundingagency) %>% 
     spread(fundingagency, n)
   
-  # sites that met their target in Qn
+  # sites that met their target in Q(n)
+  # Note: Most site hit their target at Q1, retention issue?
   msd %>% 
     sites_perf() %>% 
     filter(site_perf == 1) %>% 
     count(fiscal_year, fundingagency, site_perf_qtr) %>% 
-    spread(fundingagency, n)
+    spread(fundingagency, n) %>% 
+    gt()
   
   # sites that could have met their targets [if not bc of patient loss]
+  # In FY20, 4 Site funded by CDC lost enough patients during year to not meet their target
   msd %>% 
     sites_perf() %>% 
-    filter(site_perf == 0, site_perf_loss == 1) %>% 
+    filter(site_perf == 0, site_perf_loss > 0) %>% 
     count(fiscal_year, fundingagency) %>% 
-    spread(fundingagency, n)
+    spread(fundingagency, n) %>% 
+    gt()
   
-  # sites dragging psnu down
+  # sites dragging their psnus down
+  # In FY20, USAID had 45 sites
   msd %>% 
     sites_perf() %>% 
     filter(site_outperf == "NNO") %>% 
     count(fiscal_year, fundingagency) %>% 
-    spread(fundingagency, n)
+    spread(fundingagency, n) %>% 
+    gt()
   
-  # sites lifting psnu up
+  df_sites_nno <- msd %>% 
+    sites_perf() %>% 
+    filter(fundingagency == "USAID",
+           fiscal_year == 2020,
+           site_outperf == "NNO") %>% 
+    left_join(df_tx_sites, by = "orgunituid")
+  
+  basemap +
+    geom_point(data = df_sites_nno %>% filter(!is.na(longitude)),
+               aes(longitude, latitude), shape = 21, size = 5,
+               fill = USAID_dkred, color = "white", alpha = .6) + 
+    si_style_map()
+  
+  # sites lifting their psnus up
+  # in FY20, USAID had 113 sites
   msd %>% 
     sites_perf() %>% 
     filter(site_outperf == "YYES") %>% 
     count(fiscal_year, fundingagency) %>% 
-    spread(fundingagency, n)
+    spread(fundingagency, n) %>% 
+    gt()
+  
+  df_sites_yyes <- msd %>% 
+    sites_perf() %>% 
+    filter(fundingagency == "USAID",
+           fiscal_year == 2020,
+           site_outperf == "YYES") %>% 
+    left_join(df_tx_sites, by = "orgunituid")
+  
+  basemap +
+    geom_point(data = df_sites_yyes %>% filter(!is.na(longitude)),
+               aes(longitude, latitude), shape = 21, size = 5,
+               fill = USAID_blue, color = "white", alpha = .6) + 
+    si_style_map()
+  
+  basemap +
+    geom_point(data = df_sites_yyes %>% filter(!is.na(longitude)),
+               aes(longitude, latitude, fill = results_share), shape = 21, size = 5,
+               color = "white", alpha = .6) + 
+    scale_fill_viridis_c(direction = -1, limits = c(0, 1), labels = percent) +
+    si_style_map()
 
       
   
