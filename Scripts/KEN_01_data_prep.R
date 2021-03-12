@@ -6,23 +6,24 @@
 
 # LIBRARIES -----------------------------------------------------------------
 
-library(tidyverse)
-library(ICPIutilities)
-library(sf)
-library(glitr)
-library(glamr)
-library(gisr)
-library(gt)
-library(scales)
-library(here)
-library(gt)
-library(ggbeeswarm)
-library(extrafont)
+  library(tidyverse)
+  library(ICPIutilities)
+  library(sf)
+  library(glitr)
+  library(glamr)
+  library(gisr)
+  library(gt)
+  library(scales)
+  library(here)
+  library(gt)
+  library(ggbeeswarm)
+  library(lemon)
+  library(extrafont)
 
 # GLOBALS -----------------------------------------------------------------
   
   # Directories
-  graphics <- "Graphics"
+  graph <- "Graphics"
   
   # Output footnotes
   source <- "Source: FY21Q1 MSD"
@@ -36,9 +37,10 @@ library(extrafont)
   merdata <- glamr::si_path("path_msd")
   
   
-  # Load credentials & project paths
-  #glamr::si_path()
-  #glamr::load_secrets()
+  # Load credentials & project path
+  rasdata <- glamr::si_path("path_raster")
+  shpdata <- glamr::si_path("path_vector")
+  glamr::load_secrets()
 
 
 # FUNCTIONS -------------------------------------------------------------
@@ -372,13 +374,13 @@ library(extrafont)
                   aes(ymin = targets, ymax = targets), 
                   colour = grey10k, size = 0.5, linetype = "dashed" ) +
     facet_wrap(paste0("Age band: ", trendsfine) ~ mech_name, scales = "free", nrow = 3) +
-    scale_fill_si(palette = "siei", reverse = TRUE) +
+    scale_fill_si(palette = "siei")+
     scale_y_continuous(expand = c(0, Inf), limits = c(0, NaN))+
     si_style_ygrid() +
     labs(x = NULL, y = NULL,
          title = "NO USAID PARTNER MET THEIR FY20 TREATMENT TARGETS FOR THE <1 AGE BAND",
          subtitle = "Treatment ahievement depicted by filled bar height, targets shown in light gray (or with dotted line when surpassed)",
-         caption = source)+
+         caption = source) +
     theme(legend.position = "none")  
 
   
@@ -480,18 +482,27 @@ library(extrafont)
     theme(legend.position = "none",
           axis.line.x = element_line(colour = color_gridline))   
   
-  
+
+
+# PLOT FOR EXPORT AND REVIEW ----------------------------------------------
+
+
 # County level?
-  msd %>% 
-    #filter(snu1 %in% c("Copperbelt Province", "Central Province")) %>% 
+  msd %>% filter(trendscoarse == "<15", 
+                 !is.na(cumulative), 
+                 indicator == "TX_CURR", 
+                 fundingagency == "USAID") %>% 
+    distinct(mech_name)
+  
+ mech_tx_msd <- function(df, msd_mech_name) {
+    df %>% 
     filter(trendscoarse == "<15", 
            !is.na(cumulative), 
            indicator == "TX_CURR", 
            fundingagency == "USAID", 
            standardizeddisaggregate == "Age/Sex/HIVStatus",
-           mech_name == "AMPATHplus") %>% 
-    #mutate(mech_name = if_else(str_detect(mech_name, "DISCOVER"), "DISCOVER-H", mech_name)) %>% 
-    group_by(orgunituid, mech_name, fiscal_year, trendsfine, snu1) %>% 
+           mech_name == {{msd_mech_name}}) %>% 
+    group_by(orgunituid, mech_name, fiscal_year, trendsfine, snu1, snu1uid) %>% 
     summarise(tx_curr_peds = sum(cumulative, na.rm = TRUE),
               targets = sum(targets, na.rm = TRUE)) %>% 
     ungroup() %>% 
@@ -502,26 +513,83 @@ library(extrafont)
            average = mean(tx_curr_peds)
     ) %>% 
     ungroup() %>% 
-    mutate(color_code = if_else(target_achieved == 0, "grey", mech_name)) %>% 
-    ggplot(aes(x = trendsfine, y = tx_curr_peds, color = trendsfine)) +
-    geom_point(aes(y = maxval, colour = NA)) +
-    geom_hline(aes(yintercept = average, color = trendsfine), linetype = "dotted", size = 1) + 
-    geom_quasirandom(alpha = 0.75, method = "tukeyDense") +
-    #geom_quasirandom(data = . %>% filter(target_achieved == 0), alpha = 0.75, method = "tukeyDense") +
-    #geom_quasirandom(data = . %>% filter(target_achieved == 1), method = "tukeyDense") +
-    facet_wrap(~snu1, scales = "free_y") +
-    coord_flip() +
-    si_style_xgrid() +
-    scale_color_si(palette = "siei", reverse = TRUE) +
-    #scale_color_manual(values = c("grey" = grey10k, "SAFE" = denim, "EQUIP" = burnt_sienna,
-    # "DISCOVER-H" = scooter)) +
-    labs(x = NULL, y = "TX_CURR Achieved",
-         title = "IN FY21Q1, AMPATHplus SERVED AN AVERAGE OF ABOUT 11 PATIENTS PER SITE",
-         subtitle = "TX_CURR site level, age band averages depicted by dotted line.",
-         caption = source)  +
-    scale_y_continuous(trans = log_trans(),
-                       breaks =c(1, 5, 10, 15, 25, 50, 100, 300)) +
-    theme(legend.position = "none",
-          axis.line.x = element_line(colour = color_gridline))   
+    mutate(color_code = if_else(target_achieved == 0, "grey", mech_name),
+           trendsfine = fct_relevel(trendsfine, "10-14", "01-09") %>% fct_recode(., "1-9" = "01-09"))
+ }
+ 
+ #Function to return the geo parts
+ 
+ # Throw a map in for good measure.
+ source("Scripts/KEN_01a_gis_pull.R")
+ 
+  get_districts <- function(df) {
+    snu_df <- df %>% distinct(snu1uid, snu1)
+
+    geo_df <- 
+      spdf_county_ken %>% 
+      left_join(snu_df, by = c("uid" = "snu1uid")) %>% 
+      filter(!is.na(snu1))
+    }
+ 
+  
+  peds_mech_bswarm <- function(df, mech = "") {
+  
+    df %>% 
+      ggplot(aes(x = trendsfine, y = tx_curr_peds, color = trendsfine)) +
+      geom_point(aes(y = maxval, colour = NA)) +
+      geom_hline(aes(yintercept = average, color = trendsfine), size = 1) + 
+      geom_quasirandom(alpha = 0.75, method = "tukeyDense", groupOnX = T) +
+      #geom_quasirandom(data = . %>% filter(target_achieved == 0), alpha = 0.75, method = "tukeyDense") +
+      #geom_quasirandom(data = . %>% filter(target_achieved == 1), method = "tukeyDense") +
+      #facet_wrap(~snu1, scales = "free_y") +
+      facet_rep_wrap(~ str_remove(snu1, " County"), scales='free_y', repeat.tick.labels = 'bottom') +
+      coord_flip() +
+      si_style_xgrid() +
+      scale_color_si(palette = "siei", reverse = TRUE) +
+      #scale_color_manual(values = c("grey" = grey10k, "SAFE" = denim, "EQUIP" = burnt_sienna,
+      # "DISCOVER-H" = scooter)) +
+      labs(x = NULL, y = "TX_CURR Achieved",
+           title = paste0("IN FY21Q1, ", {{mech}}, "SERVED AN AVERAGE OF ABOUT 11 PATIENTS PER SITE"),
+           subtitle = "TX_CURR site level age band averages depicted by dotted line.",
+           caption = paste0(source, ", contact tessam@usaid.gov with questions."))  +
+      scale_y_continuous(trans = log_trans(),
+                         breaks = c(1, 5, 10, 25, 50, 100, 300)) +
+      theme(legend.position = "none",
+            axis.line.x = element_line(colour = color_gridline),
+            panel.spacing = unit(0.5, "lines"))  
+  }
+  
+  mech_map <- function(df) {
+    terr_map +
+      geom_sf(data = spdf_county_ken, fill = grey10k, color = grey30k, size = 0.25, alpha = 0.75) +
+      geom_sf(data = df, aes(fill = scooter), color = "white", size = 0.25, alpha = 0.75)+
+      geom_sf(data = spdf_ou_ken, fill = NA, color = grey90k, size = 0.5) +
+      si_style_map()+
+      theme(legend.position = "none") +
+      scale_fill_identity()
+  }
+  
+  
+  
+  ampath <- mech_tx_msd(msd, "AMPATHplus")
+  ampath_geo <- get_districts(ampath)
+  ave <- ampath %>% distinct(trendsfine, average)
+  
+  
+  peds_mech_bswarm(ampath, "AMPATHplus")
+    si_save(file.path(graph, "KEN_FY21Q1_AMPATHplus.svg"), scale = 1.25)
+  
+  mech_map(ampath_geo)
+  si_save(file.path(graph, "KEN_FY21Q1_AMPATHplus_map.svg"), height = 2, width = 2, scale = 1.5)
+  
+
+  
+  
+  
+    
+    
+  
+  
+  si_save(path(graph, "KEN_FY21Q1_AMPATHplus"))
   
   
