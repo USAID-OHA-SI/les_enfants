@@ -1,0 +1,2121 @@
+---
+title: "`r paste('Country-Specific Report:', params$country, '- FY', params$fiscal_year, 'Quarter', params$quarter)`"
+output: html_document
+params:
+  country: 'Senegal'
+  fiscal_year: 2024
+  quarter: 4
+---
+
+
+### All charts include USAID-specific, Pediatric (<15 years) data, unless noted otherwise. 
+
+To dos:
+1. add narratives at the bottom in appendix
+2. add UNAIDS data 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+###################### INTRODUCTION ---------------------------------------------------
+# This code creates the dataframes to be used in the Pediatric automated country reports
+
+
+# Steps for creating the automated pediatric country report:
+      #1. Download the country SITE x IM files
+      #2. Run creating_95_metrics_df.R file to create the summary dataframes 
+      #3. Run combining the 95s output dfs.R to combine the individual country dataframes into multiple, combined dataframes 
+      #4. Run the RMarkdown file to generate the report   ***** this code represents this step *****
+             #a. Note, there is a separate R file that runs all the reports at once. 
+
+
+library(tidyverse)
+library(janitor)
+library(data.table)
+library(ggplot2)
+library(scales)
+library(kableExtra)
+library(knitr)
+library(ggbreak)
+library(readxl)
+library(cowplot)
+library(plotly)
+
+# Define the base file path
+base_path <- "C:/Users/georg/Desktop/databases/output/Ninety95s_dfs/"
+
+#file names to load
+files <- c(
+  "combined_95_metrics_targets_peds.rda",
+  "combined_95_metrics_targets_peds_usaid.rda",
+  "combined_95_metrics_targets_peds_usaid_gender.rda",
+  "combined_95_metrics_targets_peds_cdc.rda",
+  "combined_95_metrics_targets_peds_usaid_pp.rda",
+  "combined_95_metrics_targets_peds_usaid_snu1.rda",
+  "combined_95_metrics_targets_under5.rda",
+  "combined_95_metrics_targets_under5_usaid.rda",
+  "combined_95_metrics_targets_under5_usaid_gender.rda",
+  "combined_95_metrics_targets_under5_cdc.rda",
+  "combined_95_metrics_targets_under5_usaid_pp.rda",
+  "combined_95_metrics_targets_under5_usaid_snu1.rda",
+  "combined_95_metrics_targets_adolescent.rda",
+  "combined_95_metrics_targets_adolescent_usaid.rda",
+  "combined_95_metrics_targets_adolescent_usaid_gender.rda",
+  "combined_95_metrics_targets_adolescent_cdc.rda",
+  "combined_95_metrics_targets_adolescent_usaid_pp.rda",
+  "combined_95_metrics_targets_adolescent_usaid_snu1.rda"
+)
+
+# Load all files
+for (file in files) {
+  load(paste0(base_path, file))
+}
+
+
+```
+
+
+```{r, include=FALSE}
+# Get the current date and time
+creation_time <- Sys.time()
+formatted_time <- format(creation_time, "%Y-%m-%d %H:%M:%S")
+```
+
+`r formatted_time`
+
+
+```{r, define the parameters}
+
+
+# for running report directly in R markdown
+country_selected <- 'Senegal'
+quarter_selected <- 4
+fiscal_year_selected <- 2024
+
+
+# Assign parameters to variables
+country_selected <- params$country
+fiscal_year_selected <- params$fiscal_year
+quarter_selected <- params$quarter
+
+
+```
+
+
+
+
+```{r, trend plot function }
+
+################   trend plot function 
+
+trend_plot <- function(metrics_df,
+                       countries_selected = 'all',
+                       metrics_selected,
+                       fiscal_year_start = NULL,
+                       quarter_start = NULL,
+                       fiscal_year_end = NULL,
+                       quarter_end = NULL,
+                       save_plot = FALSE,
+                       filename = "trend_plot.png") {
+  
+  # Handle 'all' option for countries_selected
+  if (length(countries_selected) == 1 && countries_selected == 'all') {
+    countries_selected <- unique(metrics_df$country)
+  } else {
+    # Input Validation for selected countries
+    if (!all(countries_selected %in% metrics_df$country)) {
+      stop("Some selected countries are not present in metrics_df.")
+    }
+  }
+  
+  # Input Validation for selected metrics
+  if (!all(metrics_selected %in% colnames(metrics_df))) {
+    stop("Some selected metrics are not present in metrics_df.")
+  }
+  
+  # Filter data based on selected countries
+  data_filtered <- metrics_df %>%
+    filter(country %in% countries_selected)
+  
+  # Create a time index for filtering
+  data_filtered <- data_filtered %>%
+    mutate(time_index = fiscal_year * 10 + quarter_num)
+  
+  # Filter data based on starting fiscal year and quarter
+  if (!is.null(fiscal_year_start) & !is.null(quarter_start)) {
+    time_index_start <- fiscal_year_start * 10 + quarter_start
+    data_filtered <- data_filtered %>%
+      filter(time_index >= time_index_start)
+  }
+  
+  # Filter data based on ending fiscal year and quarter
+  if (!is.null(fiscal_year_end) & !is.null(quarter_end)) {
+    time_index_end <- fiscal_year_end * 10 + quarter_end
+    data_filtered <- data_filtered %>%
+      filter(time_index <= time_index_end)
+  }
+  
+  # Create a time variable combining fiscal_year and quarter_num
+  data_filtered <- data_filtered %>%
+    mutate(time = paste0("FY", fiscal_year, " Q", quarter_num)) %>%
+    arrange(fiscal_year, quarter_num)
+  
+  # Convert 'time' to a factor with ordered levels
+  data_filtered$time <- factor(data_filtered$time, 
+                               levels = unique(data_filtered$time),
+                               ordered = TRUE)
+  
+  # Check if 'prime_partner_name' exists in the dataframe
+  if ("prime_partner_name" %in% colnames(data_filtered)) {
+    data_filtered <- data_filtered %>%
+      mutate(group_var = paste(country, prime_partner_name, sep = " - "))
+  } else {
+    data_filtered <- data_filtered %>%
+      mutate(group_var = country)
+  }
+  
+  # Reshape data to long format for plotting
+  plot_data <- data_filtered %>%
+    select(group_var, time, all_of(metrics_selected)) %>%
+    pivot_longer(
+      cols = all_of(metrics_selected),
+      names_to = "Metric",
+      values_to = "Value"
+    )
+  
+  # Handle missing values by removing or imputing
+  plot_data <- plot_data %>%
+    drop_na(Value)
+  
+  # Determine if plotting single or multiple metrics
+  num_metrics <- length(metrics_selected)
+  
+  # Set y-axis label based on the number of metrics
+  if (num_metrics == 1) {
+    y_label <- metrics_selected[1]
+  } else {
+    y_label <- "Value"
+  }
+  
+  # Generate the trend plot
+  if (num_metrics >= 1) {
+    # Plot all trend lines on the same graph
+    p <- ggplot(plot_data, aes(x = time, y = Value, color = group_var, linetype = Metric, group = interaction(group_var, Metric))) +
+      geom_line(linewidth = 1) +  # Updated from size to linewidth
+      geom_point(size = 2) +
+      labs(
+        title = paste("Trend of", paste(metrics_selected, collapse = ", "), "Over Time"),
+        subtitle = if (length(countries_selected) > 1) "All Countries" else paste("Country:", countries_selected),
+        x = "Fiscal Year and Quarter",
+        y = y_label,
+        color = if ("prime_partner_name" %in% colnames(metrics_df)) "Group (Country - Partner)" else "Country",
+        linetype = if (num_metrics > 1) "Metric" else NULL
+      ) +
+      theme_classic() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 12, hjust = 0.5)
+      ) +
+      scale_y_continuous(labels = scales::comma_format()) +
+      scale_color_discrete()
+  } else {
+    stop("Please select at least one metric to plot.")
+  }
+  
+  # Display the plot
+  print(p)
+  
+}
+
+```
+
+
+```{r, calculating percentage change in variables}
+
+# Filter data for the selected country, fiscal year, and quarter
+current_data <- combined_95_metrics_targets_peds_usaid %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+# Get current values
+current_HTS_TST <- current_data$HTS_TST
+current_Positivity_Rate <- current_data$Positivity_Rate
+current_TX_CURR <- current_data$TX_CURR
+current_VL_Suppression_Rate <- current_data$VL_Suppression_Rate
+current_Linkage_rate = current_data$Linkage_Rate
+
+# Calculate previous quarter
+if (quarter_selected == 1) {
+  prev_fiscal_year <- fiscal_year_selected - 1
+  prev_quarter <- 4
+} else {
+  prev_fiscal_year <- fiscal_year_selected
+  prev_quarter <- quarter_selected - 1
+}
+
+# Data from previous quarter
+prev_data <- combined_95_metrics_targets_peds_usaid %>%
+  filter(country == country_selected,
+         fiscal_year == prev_fiscal_year,
+         quarter_num == prev_quarter)
+
+# Get previous values
+prev_HTS_TST <- prev_data$HTS_TST
+prev_Positivity_Rate <- prev_data$Positivity_Rate
+prev_TX_CURR <- prev_data$TX_CURR
+prev_VL_Suppression_Rate <- prev_data$VL_Suppression_Rate
+
+# Calculate one year ago
+year_ago_fiscal_year <- fiscal_year_selected - 1
+year_ago_quarter <- quarter_selected
+
+# Data from one year ago
+year_ago_data <- combined_95_metrics_targets_peds_usaid %>%
+  filter(country == country_selected,
+         fiscal_year == year_ago_fiscal_year,
+         quarter_num == year_ago_quarter)
+
+# Get year-ago values
+year_ago_HTS_TST <- year_ago_data$HTS_TST
+year_ago_Positivity_Rate <- year_ago_data$Positivity_Rate
+year_ago_TX_CURR <- year_ago_data$TX_CURR
+year_ago_VL_Suppression_Rate <- year_ago_data$VL_Suppression_Rate
+
+# Calculate percentage changes
+change_HTS_TST_prev_quarter <- ((current_HTS_TST - prev_HTS_TST) / prev_HTS_TST) * 100
+change_HTS_TST_year_ago <- ((current_HTS_TST - year_ago_HTS_TST) / year_ago_HTS_TST) * 100
+
+change_TX_CURR_prev_quarter <- ((current_TX_CURR - prev_TX_CURR) / prev_TX_CURR) * 100
+change_TX_CURR_year_ago <- ((current_TX_CURR - year_ago_TX_CURR) / year_ago_TX_CURR) * 100
+
+change_VL_Suppression_Rate_prev_quarter <- (current_VL_Suppression_Rate - prev_VL_Suppression_Rate) * 100
+change_VL_Suppression_Rate_year_ago <- (current_VL_Suppression_Rate - year_ago_VL_Suppression_Rate) * 100
+
+
+num_unique_countries <- length(unique(combined_95_metrics_targets_peds_usaid$country))
+
+
+```
+
+
+
+## Overview of FY`r fiscal_year_selected` Q`r quarter_selected` - `r country_selected`
+
+- The number of new tests was **`r scales::comma(current_HTS_TST)`**, which is a **`r abs(round(change_HTS_TST_prev_quarter, 1))`%** `r ifelse(change_HTS_TST_prev_quarter >= 0, "increase", "decrease")` from last quarter and a **`r abs(round(change_HTS_TST_year_ago, 1))`%** `r ifelse(change_HTS_TST_year_ago >= 0, "increase", "decrease")` from one year ago. The positivity rate was **`r scales::percent(current_Positivity_Rate, accuracy = 0.1)`**. 
+
+- There are **`r scales::comma(current_TX_CURR)`** patients on ART. This is a **`r abs(round(change_TX_CURR_prev_quarter, 1))`%** `r ifelse(change_TX_CURR_prev_quarter >= 0, "increase", "decrease")` from last quarter and a **`r abs(round(change_TX_CURR_year_ago, 1))`%** `r ifelse(change_TX_CURR_year_ago >= 0, "increase", "decrease")` from one year ago. The linkage rate is  **`r scales::percent(abs(round(current_Linkage_rate, 3)), accuracy = 0.1)`**. 
+
+- The viral suppression rate is **`r scales::percent(current_VL_Suppression_Rate, accuracy = 0.1)`**. This is a **`r abs(round(change_VL_Suppression_Rate_prev_quarter, 1))`** percentage point `r ifelse(change_VL_Suppression_Rate_prev_quarter >= 0, "increase", "decrease")` from last quarter and a **`r abs(round(change_VL_Suppression_Rate_year_ago, 1))`** percentage point `r ifelse(change_VL_Suppression_Rate_year_ago >= 0, "increase", "decrease")` from one year ago. 
+
+<br>
+------------------------------------------------------------------------------
+
+
+## Trends 
+
+```{r, overview trend plot, warning=FALSE, message=FALSE, fig.width=12, fig.height=6}
+
+### Trend plot 1
+
+# Filter data for the selected country and up to the selected fiscal year and quarter
+trend_data <- combined_95_metrics_targets_peds_usaid %>%
+  filter(
+    country == country_selected,
+    (fiscal_year < fiscal_year_selected) | 
+      (fiscal_year == fiscal_year_selected & quarter_num <= quarter_selected)
+  )
+
+
+####  Linkage, coverage, and suppression plot ------------------
+
+# Prepare data for the trend line chart (rates)
+trend_rates <- trend_data %>%
+  select(fiscal_year, quarter_num, Linkage_Rate, VL_Coverage_Rate, VL_Suppression_Rate) %>%
+  mutate(
+    time = paste0("FY", fiscal_year, " Q", quarter_num),
+    time = factor(time, levels = unique(time))
+  ) %>%
+  pivot_longer(
+    cols = c(Linkage_Rate, VL_Coverage_Rate, VL_Suppression_Rate),
+    names_to = "Metric",
+    values_to = "Rate"
+  )
+
+# Map metric names for better readability
+metric_labels <- c(
+  "Linkage_Rate" = "Linkage",
+  "VL_Coverage_Rate" = "Viral Coverage",
+  "VL_Suppression_Rate" = "Viral Suppression"
+)
+
+trend_rates$Metric <- recode(trend_rates$Metric, !!!metric_labels)
+
+# Update the trend line chart for rates with USAID colors and latest value labels
+rate_trend_plot <- ggplot(trend_rates, aes(x = time, y = Rate, color = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  # Add text for the most recent data points
+  geom_text(
+    data = trend_rates %>%
+      filter(fiscal_year == fiscal_year_selected & quarter_num == quarter_selected),
+    aes(label = scales::percent(Rate, accuracy = 1)),
+    vjust = -1, 
+    size = 4,
+    show.legend = FALSE
+  ) +
+  labs(
+    title = 'Trend of Key Performance Metrics',
+    subtitle = 'Pediatrics (<15 years of age)',
+    y = "",
+    x = "", 
+    color = "Metric", 
+    caption = "Indicators calculated as follows: Linkage = TX_NEW / HTS_TST_POS; 
+    Viral Coverage = TX_PVLS_Denominator / TX_CURR [2 Q Prior]; 
+    Viral Suppression = TX_PVLS_Numerator / TX_Denominator."
+  ) +
+  scale_color_manual(
+    values = c(
+      "Linkage" = "#5BB5D5",       # Viking
+      "Viral Coverage" = "#BA0C2F",  # USAID Red
+      "Viral Suppression" = "#15478A" # Midnight Blue
+    )
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+rate_trend_plot
+
+
+
+
+####  Positivity plot  ------------------
+
+# Prepare data for the Positivity Rate trend line chart
+positivity_rates <- trend_data %>%
+  select(fiscal_year, quarter_num, Positivity_Rate) %>%
+  mutate(
+    time = paste0("FY", fiscal_year, " Q", quarter_num),
+    time = factor(time, levels = unique(time)), 
+    Metric = 'Positivity'
+  )
+
+
+# Update the trend line chart for rates with USAID colors and latest value labels
+positivity_rate_plot <- ggplot(positivity_rates, aes(x = time, y = Positivity_Rate, color = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  # Add text for the most recent data points
+  geom_text(
+    data = positivity_rates %>%
+      filter(fiscal_year == fiscal_year_selected & quarter_num == quarter_selected),
+    aes(label = scales::percent(Positivity_Rate, accuracy = .1)),
+    vjust = -1, 
+    size = 4,
+    show.legend = FALSE
+  ) +
+  labs(
+    title = 'Trend of HIV Positive Tests',
+    subtitle = 'Pediatrics (<15 years of age)',
+    y = "",
+    x = "", 
+    color = "Metric", 
+    caption = "Positivity calculated as: HTS_TST_POS / HTS_TST"
+  ) +
+  scale_color_manual(
+    values = c(
+      "Positivity" = "#E14BA1"
+    )
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = .1)) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+positivity_rate_plot
+
+
+
+
+```
+
+<br>
+
+```{r, trend plot 2,  warning=FALSE, message=FALSE, fig.width=12, fig.height=6}
+##### Trend plot 2
+
+# Prepare data for the trend line chart (counts)
+trend_counts <- trend_data %>%
+  select(fiscal_year, quarter_num, TX_CURR, HTS_TST, HTS_TST_POS, HTS_TST_targets, HTS_TST_POS_targets, TX_CURR_target) %>%
+  mutate(
+    time = paste0("FY", fiscal_year, " Q", quarter_num),
+    time = factor(time, levels = unique(time))
+  ) %>%
+  pivot_longer(
+    cols = c(TX_CURR, HTS_TST, HTS_TST_POS, HTS_TST_targets, HTS_TST_POS_targets, TX_CURR_target),
+    names_to = "Metric",
+    values_to = "Count"
+  )
+
+
+# Define custom colors for metrics and their respective targets
+metric_colors <- c(
+  "TX_CURR" = "darkgreen",
+  "TX_CURR_target" = "lightgreen",
+  "HTS_TST" = "darkred",
+  "HTS_TST_targets" = "pink",
+  "HTS_TST_POS" = "darkblue",
+  "HTS_TST_POS_targets" = "lightblue"
+)
+
+# Update the ggplot to use the custom color scale
+count_trend_plot <- ggplot(trend_counts, aes(x = time, y = Count, color = Metric, group = Metric)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  labs(
+    title = 'Trend of Key Performance Counts',
+    subtitle = 'Pediatrics (<15 years of age)',
+    x = "",
+    y = "Count",
+    color = "Metric"
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  scale_color_manual(values = metric_colors) +  # Apply the custom color scale
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+count_trend_plot 
+
+```
+
+
+<br>
+
+
+------------------------------------------------------------------------------
+
+## 1st 95 for Q`r quarter_selected`
+
+
+```{r first-95-plot, echo=FALSE, fig.height=4, fig.width=12}
+
+#### first 95
+
+# Filter the data for the specified parameters
+data_subset <- combined_95_metrics_targets_peds_usaid %>%
+    filter(
+      country == country_selected,
+      fiscal_year == fiscal_year_selected,
+      quarter_num == quarter_selected
+    )
+  
+  # Check if data_subset is empty
+  if (nrow(data_subset) == 0) {
+    stop("No data available for the selected parameters.")
+  }
+  
+# Reshape the data to long format for Actual and Target values
+plot_data <- data_subset %>%
+    pivot_longer(
+      cols = c("HTS_TST", "HTS_TST_POS", "HTS_TST_targets", "HTS_TST_POS_targets"),
+      names_to = c("indicator", "Type"),
+      names_pattern = "^(HTS_TST|HTS_TST_POS)(?:_(targets))?$",
+      values_to = "total_value"
+    ) %>%
+    mutate(
+      Type = ifelse(Type == "targets", "Target", "Actual"),
+      indicator = factor(indicator, levels = c("HTS_TST", "HTS_TST_POS"))
+    ) %>%
+    filter(Type %in% c("Actual", "Target"))
+  
+
+# Define a USAID-inspired color palette
+usaid_fill_palette <- c("Actual" = "#5BB5D5", "Target" = "#F36428")  # Viking for Actual, Tango for Target
+
+# Calculate max y-values per prime_partner_name for annotation placement
+max_y_values <- plot_data %>%
+    group_by(prime_partner_name) %>%
+    summarize(max_total_value = max(total_value, na.rm = TRUE))
+
+annotation_data <- data_subset %>%
+    select(prime_partner_name, Positivity_Rate) %>%
+    left_join(max_y_values, by = "prime_partner_name") %>%
+    mutate(
+      x_position = factor("HTS_TST_POS", levels = levels(plot_data$indicator)),  # Corrected
+      y_position = 0.3 * max_total_value  # 30% of max y-value per facet
+    )
+
+# Create the grouped bar plot with facet for prime_partner_name
+plot1_usaid <- ggplot(plot_data, aes(x = indicator, y = total_value, fill = Type)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.9), width = 0.8) +
+    geom_text(aes(label = scales::comma(total_value)),
+              position = position_dodge(width = 0.9),
+              vjust = -0.5,
+              size = 3.5) +
+    labs(
+      title = 'HTS_TST & HTS_TST_POS',
+      subtitle = 'USAID: Pediatrics (<15 years of age)',
+      y = "Total Count",
+      x = "",
+      fill = "Value Type",
+      caption = "Positivity Rate is calculated as HTS_TST_POS / HTS_TST"
+    ) +
+    theme_classic(base_size = 14) +
+    facet_wrap(~prime_partner_name, scales = "free_y") +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+   axis.text.x = element_text(angle = 45, hjust = 1)
+   ) +
+    scale_fill_manual(values = usaid_fill_palette) +
+    scale_y_continuous(
+      labels = scales::comma,
+      expand = expansion(mult = c(0, 0.2))  # Adds 20% space above the highest bar
+    ) +
+    geom_text(
+      data = annotation_data,
+      aes(
+        x = x_position,
+        y = y_position,
+        label = paste("Positivity Rate:", scales::percent(Positivity_Rate, accuracy = 0.01))
+      ),
+      inherit.aes = FALSE,
+      size = 4,
+      fontface = "bold",
+      hjust = 0.5
+    )
+
+
+
+#### CDC ------------
+
+# Filter the data for the specified parameters
+data_subset <- combined_95_metrics_targets_peds_cdc %>%
+    filter(
+      country == country_selected,
+      fiscal_year == fiscal_year_selected,
+      quarter_num == quarter_selected
+    )
+  
+if (nrow(data_subset) == 0) {
+  message("No CDC data available for the selected parameters: ",
+          country_selected, ", FY ", fiscal_year_selected, ", Quarter ", quarter_selected, ".")
+  
+  plot1_usaid
+  
+} else {
+  
+# Reshape the data to long format for Actual and Target values
+plot_data <- data_subset %>%
+    pivot_longer(
+      cols = c("HTS_TST", "HTS_TST_POS", "HTS_TST_targets", "HTS_TST_POS_targets"),
+      names_to = c("indicator", "Type"),
+      names_pattern = "^(HTS_TST|HTS_TST_POS)(?:_(targets))?$",
+      values_to = "total_value"
+    ) %>%
+    mutate(
+      Type = ifelse(Type == "targets", "Target", "Actual"),
+      indicator = factor(indicator, levels = c("HTS_TST", "HTS_TST_POS"))
+    ) %>%
+    filter(Type %in% c("Actual", "Target"))
+
+
+# Calculate max y-values per prime_partner_name for annotation placement
+max_y_values <- plot_data %>%
+    group_by(prime_partner_name) %>%
+    summarize(max_total_value = max(total_value, na.rm = TRUE))
+
+annotation_data <- data_subset %>%
+    select(prime_partner_name, Positivity_Rate) %>%
+    left_join(max_y_values, by = "prime_partner_name") %>%
+    mutate(
+      x_position = factor("HTS_TST_POS", levels = levels(plot_data$indicator)),  # Corrected
+      y_position = 0.3 * max_total_value  # 30% of max y-value per facet
+    )
+  
+# Define a USAID-inspired color palette
+usaid_fill_palette <- c("Actual" = "#5BB5D5", "Target" = "#F36428")  # Viking for Actual, Tango for Target
+
+# Create the grouped bar plot with facet for prime_partner_name
+plot1_cdc <- ggplot(plot_data, aes(x = indicator, y = total_value, fill = Type)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.9), width = 0.8) +
+    geom_text(aes(label = scales::comma(total_value)),
+              position = position_dodge(width = 0.9),
+              vjust = -0.5,
+              size = 3.5) +
+    labs(
+      title = 'HTS_TST & HTS_TST_POS',
+      subtitle = 'CDC: Pediatrics (<15 years of age)',
+      y = "Total Count",
+      x = "",
+      fill = "Value Type",
+      caption = "Positivity Rate is calculated as HTS_TST_POS / HTS_TST"
+    ) +
+    theme_classic(base_size = 14) +
+    facet_wrap(~prime_partner_name, scales = "free_y") +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+   axis.text.x = element_text(angle = 45, hjust = 1)
+   ) +
+    scale_fill_manual(values = usaid_fill_palette) +
+    scale_y_continuous(
+      labels = scales::comma,
+      expand = expansion(mult = c(0, 0.2))  # Adds 20% space above the highest bar
+    ) +
+    geom_text(
+      data = annotation_data,
+      aes(
+        x = x_position,
+        y = y_position,
+        label = paste("Positivity Rate:", scales::percent(Positivity_Rate, accuracy = 0.01))
+      ),
+      inherit.aes = FALSE,
+      size = 4,
+      fontface = "bold",
+      hjust = 0.5
+    )
+
+
+combined_plot_1st95 <- plot_grid(plot1_usaid, plot1_cdc, ncol = 2)
+combined_plot_1st95
+
+}
+  
+```
+
+<br>
+------------------------------------------------------------------------------
+
+## 2nd 95 for Q`r quarter_selected`
+
+```{r second-95-plot, echo=FALSE, fig.height=4, fig.width=10}
+
+#### second 95
+
+ # Filter the dataframe for the specified parameters
+data_filtered <- combined_95_metrics_targets_peds_usaid %>%
+    filter(
+      country == country_selected,
+      fiscal_year == fiscal_year_selected,
+      quarter_num == quarter_selected
+    )
+  
+# Check if the filtered data exists
+if (nrow(data_filtered) == 0) {
+  stop("No data found for the specified country, fiscal_year, and quarter.")
+}
+
+# Extract HTS_TST_POS, TX_NEW, Linkage_Rate, and prime_partner_name
+plot_data <- data_filtered %>%
+  select(prime_partner_name, HTS_TST_POS, TX_NEW) %>%
+  pivot_longer(
+    cols = c(HTS_TST_POS, TX_NEW),
+    names_to = "indicator",
+    values_to = "total_value"
+  ) 
+
+# Prepare annotation data
+annotation_data <- data_filtered %>%
+  select(prime_partner_name, Linkage_Rate) %>%
+  mutate(
+    x_position = 1.5,  # Position over TX_NEW
+    y_position = max(plot_data$total_value) * 0.3  # 30% of the max y-value
+  )
+
+
+# Ensure 'indicator' is a factor with correct levels
+plot_data$indicator <- factor(plot_data$indicator, levels = c("HTS_TST_POS", "TX_NEW"))
+
+# Define a color palette for the indicators
+indicator_palette <- c("HTS_TST_POS" = "#F36428",  # Tango
+                     "TX_NEW" = "#5BB5D5")       # Viking
+
+# Create the USAID bar plot
+plot_usaid <- ggplot(plot_data, aes(x = indicator, y = total_value, fill = indicator)) +
+    geom_bar(stat = "identity", width = 0.8) +
+    geom_text(aes(label = scales::comma(total_value)), 
+              vjust = -0.5, size = 3.5) +
+    labs(
+      title = paste0(country_selected, ", FY ", fiscal_year_selected, ", Q", quarter_selected, " (USAID)"),
+      y = "Total Count",
+      x = "",
+      caption = "Proxy Linkage Rate calculated as TX_NEW / HTS_TST_POS"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "none",
+      strip.text = element_text(face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+      plot.caption = element_text(size = 10, hjust = 0, face = "italic")
+    ) +
+    scale_fill_manual(values = indicator_palette) +
+    scale_y_continuous(
+      labels = scales::comma,
+      expand = expansion(mult = c(0, 0.2))  # Adds space above the highest bar
+    ) +
+    facet_wrap(~prime_partner_name, scales = "free_y") +
+    geom_text(
+      data = annotation_data,
+      aes(
+        x = x_position,
+        y = y_position,
+        label = paste("Proxy Linkage Rate:", scales::percent(Linkage_Rate, accuracy = 0.01))
+      ),
+      inherit.aes = FALSE,
+      size = 4,
+      fontface = "bold",
+      hjust = 0.5
+    )
+
+
+  
+# Filter the dataframe for the specified parameters
+data_filtered <- combined_95_metrics_targets_peds_cdc %>%
+    filter(
+      country == country_selected,
+      fiscal_year == fiscal_year_selected,
+      quarter_num == quarter_selected
+    )
+  
+if (nrow(data_subset) == 0) {
+  message("No CDC data available for the selected parameters: ",
+          country_selected, ", FY ", fiscal_year_selected, ", Quarter ", quarter_selected, ".")
+  
+  plot_usaid
+  
+} else {
+  
+  # Extract HTS_TST_POS, TX_NEW, Linkage_Rate, and prime_partner_name
+  plot_data <- data_filtered %>%
+    select(prime_partner_name, HTS_TST_POS, TX_NEW) %>%
+    pivot_longer(
+      cols = c(HTS_TST_POS, TX_NEW),
+      names_to = "indicator",
+      values_to = "total_value"
+    )
+  
+  # Prepare annotation data
+annotation_data <- data_filtered %>%
+  select(prime_partner_name, Linkage_Rate) %>%
+  mutate(
+    x_position = 1.5,  # Position over TX_NEW
+    y_position = max(plot_data$total_value) * 0.3  # 30% of the max y-value
+  )
+
+  
+  # Ensure 'indicator' is a factor with correct levels
+  plot_data$indicator <- factor(plot_data$indicator, levels = c("HTS_TST_POS", "TX_NEW"))
+  
+  # Create the bar plot with facet for prime_partner_name
+  # Create the CDC bar plot
+  plot_cdc <- ggplot(plot_data, aes(x = indicator, y = total_value, fill = indicator)) +
+      geom_bar(stat = "identity", width = 0.8) +
+      geom_text(aes(label = scales::comma(total_value)), 
+                vjust = -0.5, size = 3.5) +
+      labs(
+        title = paste0(country_selected, ", FY ", fiscal_year_selected, ", Q", quarter_selected, " (CDC)"),
+        y = "Total Count",
+        x = "",
+        caption = "Proxy Linkage Rate calculated as TX_NEW / HTS_TST_POS"
+      ) +
+      theme_classic(base_size = 14) +
+      theme(
+        legend.position = "none",
+        strip.text = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        plot.caption = element_text(size = 10, hjust = 0, face = "italic")
+      ) +
+      scale_fill_manual(values = indicator_palette) +
+      scale_y_continuous(
+        labels = scales::comma,
+        expand = expansion(mult = c(0, 0.2))  # Adds space above the highest bar
+      ) +
+      facet_wrap(~prime_partner_name, scales = "free_y") +
+      geom_text(
+        data = annotation_data,
+        aes(
+          x = x_position,
+          y = y_position,
+          label = paste("Proxy Linkage Rate:", scales::percent(Linkage_Rate, accuracy = 0.01))
+        ),
+        inherit.aes = FALSE,
+        size = 4,
+        fontface = "bold",
+        hjust = 0.5
+      )
+    
+  # Combine the USAID and CDC plots into one
+  combined_plot_2nd95 <- cowplot::plot_grid(
+    plot_usaid, plot_cdc,
+    labels = c("USAID", "CDC"),
+    label_size = 14,
+    ncol = 2
+  )
+    
+    
+      
+  combined_plot_2nd95 <- plot_grid(plot_usaid, plot_cdc, ncol = 2)
+  combined_plot_2nd95
+}
+  
+
+```
+
+<br>
+
+---------------------------------------------------------------------------------
+
+## 3rd 95 for Q`r quarter_selected`
+
+```{r third-95-plot, echo=FALSE, fig.height=4, fig.width=12}
+
+
+#### third 95
+
+# Filter the dataframe for the specified country, fiscal_year, and quarter
+data_filtered <- combined_95_metrics_targets_peds_usaid %>%
+    filter(
+      country == country_selected,
+      fiscal_year == fiscal_year_selected,
+      quarter_num == quarter_selected
+    )
+  
+
+# Extract relevant variables including prime_partner_name
+  plot_data <- data_filtered %>%
+    select(prime_partner_name, TX_CURR, TX_PVLS_D, TX_PVLS_N, VL_Coverage_Rate, VL_Suppression_Rate) %>%
+    pivot_longer(
+      cols = c(TX_CURR, TX_PVLS_D, TX_PVLS_N),
+      names_to = "indicator",
+      values_to = "total_value"
+    )
+  
+# Ensure 'indicator' is a factor and set the levels
+  plot_data$indicator <- factor(plot_data$indicator, levels = c("TX_CURR", "TX_PVLS_D", "TX_PVLS_N"))
+  
+# Calculate max y-values per prime_partner_name
+  max_y_values <- plot_data %>%
+    group_by(prime_partner_name) %>%
+    summarize(max_total_value = max(total_value, na.rm = TRUE))
+  
+# Calculate annotation positions for each prime partner
+coverage_annotation <- plot_data %>%
+    filter(indicator == "TX_PVLS_D") %>%
+    distinct(prime_partner_name, VL_Coverage_Rate, total_value) %>%
+    mutate(
+      x = 2,  # Position over TX_PVLS_D
+      y = total_value * 0.6
+    )
+
+suppression_annotation <- plot_data %>%
+    filter(indicator == "TX_PVLS_N") %>%
+    distinct(prime_partner_name, VL_Suppression_Rate, total_value) %>%
+    mutate(
+      x = 2,  # Position over TX_PVLS_N
+      y = total_value * 0.4
+    )
+  
+# Define a color palette for the indicators
+indicator_palette <- c("TX_CURR" = "#5BB5D5",    # Viking
+                       "TX_PVLS_D" = "#F36428",  # Tango
+                       "TX_PVLS_N" = "#15478A")  # Midnight Blue
+
+
+
+# Ensure 'indicator' is a factor with correct levels
+plot_data$indicator <- factor(plot_data$indicator, levels = c("TX_CURR", "TX_PVLS_D", "TX_PVLS_N"))
+
+
+
+# Create the updated bar plot
+  plot <- ggplot(plot_data, aes(x = indicator, y = total_value, fill = indicator)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = comma(total_value)), vjust = -0.5, size = 4) +
+    labs(
+      title = paste0(country_selected, ", FY ", fiscal_year_selected, ", Q", quarter_selected),
+      subtitle = 'Pediatrics (<15 years of age)',
+      y = "Total Count",
+      x = ""
+    ) +
+    theme(
+      legend.position = "none",
+      strip.text = element_text(face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1)  # Tilt x-axis labels
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", size = 12, hjust = 0.5),
+      plot.subtitle = element_text(size = 10, hjust = 0.5)
+    ) +
+    scale_y_continuous(
+      labels = comma,
+      expand = expansion(mult = c(0, 0.2))  # Adds 20% space above the highest bar
+    ) +
+    scale_fill_manual(values = indicator_palette) +  # Apply the custom color palette
+    facet_wrap(~ prime_partner_name, scales = "free_y")
+  
+# Add VL Coverage Rate annotations
+  plot <- plot + 
+    geom_text(
+      data = coverage_annotation,
+      aes(
+        x = x,
+        y = y,
+        label = paste("VL Coverage:", percent(VL_Coverage_Rate, accuracy = 0.01))
+      ),
+      inherit.aes = FALSE,
+      size = 4,
+      fontface = "bold",
+      hjust = 0.5
+    )
+
+  
+# Add VL Suppression Rate annotations
+  plot_usaid <- plot + 
+    geom_text(
+      data = suppression_annotation,
+      aes(
+        x = x,
+        y = y,
+        label = paste("VL Suppression:", percent(VL_Suppression_Rate, accuracy = 0.01))
+      ),
+      inherit.aes = FALSE,
+      size = 4,
+      fontface = "bold",
+      hjust = 0.5
+    )
+
+  
+  
+###### now cdc data -----------------
+  
+  # Filter the dataframe for the specified country, fiscal_year, and quarter
+data_filtered <- combined_95_metrics_targets_peds_cdc %>%
+    filter(
+      country == country_selected,
+      fiscal_year == fiscal_year_selected,
+      quarter_num == quarter_selected
+    )
+  
+# Check if the filtered data exists
+ if (nrow(data_filtered) == 0) {
+  message("No CDC data available for the selected parameters: ",
+          country_selected, ", FY ", fiscal_year_selected, ", Quarter ", quarter_selected, ".")
+  
+  plot_usaid
+  
+} else {
+  
+
+  # Extract relevant variables including prime_partner_name
+  plot_data <- data_filtered %>%
+    select(prime_partner_name, TX_CURR, TX_PVLS_D, TX_PVLS_N, VL_Coverage_Rate, VL_Suppression_Rate) %>%
+    pivot_longer(
+      cols = c(TX_CURR, TX_PVLS_D, TX_PVLS_N),
+      names_to = "indicator",
+      values_to = "total_value"
+    )
+  
+  # Ensure 'indicator' is a factor and set the levels
+  plot_data$indicator <- factor(plot_data$indicator, levels = c("TX_CURR", "TX_PVLS_D", "TX_PVLS_N"))
+  
+  # Calculate annotation positions for each prime partner
+  coverage_annotation <- plot_data %>%
+      filter(indicator == "TX_PVLS_D") %>%
+      distinct(prime_partner_name, VL_Coverage_Rate, total_value) %>%
+      mutate(
+        x = 2,  # Position over TX_PVLS_D
+        y = total_value * 0.6
+      )
+  
+  suppression_annotation <- plot_data %>%
+      filter(indicator == "TX_PVLS_N") %>%
+      distinct(prime_partner_name, VL_Suppression_Rate, total_value) %>%
+      mutate(
+        x = 2,  # Position over TX_PVLS_N
+        y = total_value * 0.4
+      )
+    
+  # Define a color palette for the indicators
+  indicator_palette <- c("TX_CURR" = "#5BB5D5",    # Viking
+                         "TX_PVLS_D" = "#F36428",  # Tango
+                         "TX_PVLS_N" = "#15478A")  # Midnight Blue
+
+
+
+  # Ensure 'indicator' is a factor with correct levels
+  plot_data$indicator <- factor(plot_data$indicator, levels = c("TX_CURR", "TX_PVLS_D", "TX_PVLS_N"))
+  
+  # Create the bar plot with facets for prime_partner_name
+  plot <- ggplot(plot_data, aes(x = indicator, y = total_value, fill = indicator)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = comma(total_value)), vjust = -0.5, size = 4) +
+    labs(
+      title = paste0(country_selected, ", FY ", fiscal_year_selected, ", Q", quarter_selected),
+      y = "Total Count",
+      x = ""
+    ) +
+    theme(
+      legend.position = "none",
+      strip.text = element_text(face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1)  # Tilt x-axis labels
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", size = 12, hjust = 0.5),
+      plot.subtitle = element_text(size = 10, hjust = 0.5)
+    ) +
+    scale_y_continuous(
+      labels = comma,
+      expand = expansion(mult = c(0, 0.2))  # Adds 20% space above the highest bar
+    ) +
+    scale_fill_manual(values = indicator_palette) +  # Apply the custom color palette
+    facet_wrap(~ prime_partner_name, scales = "free_y")
+  
+# Add VL Coverage Rate annotations
+  plot <- plot + 
+    geom_text(
+      data = coverage_annotation,
+      aes(
+        x = x,
+        y = y,
+        label = paste("VL Coverage:", percent(VL_Coverage_Rate, accuracy = 0.01))
+      ),
+      inherit.aes = FALSE,
+      size = 4,
+      fontface = "bold",
+      hjust = 0.5
+    )
+
+  
+# Add VL Suppression Rate annotations
+  plot_cdc <- plot + 
+    geom_text(
+      data = suppression_annotation,
+      aes(
+        x = x,
+        y = y,
+        label = paste("VL Suppression:", percent(VL_Suppression_Rate, accuracy = 0.01))
+      ),
+      inherit.aes = FALSE,
+      size = 4,
+      fontface = "bold",
+      hjust = 0.5
+    )
+  
+  
+combined_plot_3rd95 <- plot_grid(plot_usaid, plot_cdc, ncol = 2)
+combined_plot_3rd95
+
+}
+
+```
+
+<br>
+
+---------------------------------------------------------------------------------
+
+## Comparison with other countries 
+
+
+```{r plots that compare across different countries focusing on the country of interest, echo=FALSE, warning=FALSE, message=FALSE}
+
+# Load necessary libraries
+
+# Filter data for the selected fiscal year and quarter
+most_recent_data <- combined_95_metrics_targets_peds_usaid %>%
+  filter(fiscal_year == fiscal_year_selected, quarter_num == quarter_selected)
+
+
+# Create an 'All Combined' row, including new metrics
+all_combined <- most_recent_data %>%
+  summarise(
+    country = "All Combined",
+    `HTS_TST` = sum(HTS_TST, na.rm = TRUE),
+    `HTS_TST_POS` = sum(HTS_TST_POS, na.rm = TRUE),
+    `HTS_TST_targets` = sum(HTS_TST_targets, na.rm = TRUE),
+    `HTS_TST_POS_targets` = sum(HTS_TST_POS_targets, na.rm = TRUE),
+    `TX_NEW` = sum(TX_NEW, na.rm = TRUE),
+     TX_CURR = sum(TX_CURR, na.rm = TRUE),
+     TX_CURR_target = sum(TX_CURR_target, na.rm = TRUE),
+    `TX_PVLS_D` = sum(TX_PVLS_D, na.rm = TRUE),
+    `TX_PVLS_N` = sum(TX_PVLS_N, na.rm = TRUE)
+  ) %>%
+  mutate(
+    Positivity_Rate = HTS_TST_POS / HTS_TST,
+    Linkage_Rate = TX_NEW / HTS_TST_POS,
+    VL_Suppression_Rate = `TX_PVLS_N` / `TX_PVLS_D`, 
+    fiscal_year = fiscal_year_selected, 
+    quarter_num = quarter_selected
+  )
+
+# Combine 'All Combined' row with indicator data
+most_recent_data <- bind_rows(most_recent_data, all_combined)
+
+
+create_highlighted_barplot <- function(data, indicator, y_label, title, subtitle, caption) {
+  # Prepare data for plotting
+  plot_data <- data %>%
+    select(country, !!sym(indicator))
+  
+  # Add a column to identify the selected country
+  plot_data <- plot_data %>%
+    mutate(
+      highlight = ifelse(country == country_selected, "Selected", "Other"), 
+      country_ordered = reorder(country, -!!sym(indicator))  
+    )
+  
+  # Define colors
+  colors <- c("Selected" = "#3B5BBE", "Other" = "grey70")
+  
+  # Plot
+  ggplot(plot_data, aes(x = country_ordered, y = !!sym(indicator), fill = highlight)) +
+    geom_bar(stat = "identity") +
+    scale_y_continuous(labels = scales::comma_format()) + 
+    scale_fill_manual(values = colors) +
+    # Add geom_text only for the selected country
+    geom_text(
+      data = subset(plot_data, highlight == "Selected"),
+      aes(label = sprintf("%.3f", !!sym(indicator))),
+      vjust = -0.5,
+      size = 3,
+      color = "black"
+    ) +
+    labs(
+      title = title,
+      subtitle = subtitle, 
+      x = "Country",  # Explicitly set the x-axis label
+      y = y_label,
+      fill = NULL, 
+      caption = caption
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "none"
+    )
+}
+
+
+
+
+# Positivity Rate Bar Plot
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator = "Positivity_Rate",
+  y_label = "Positivity Rate",
+  title = paste("Positivity Rate by Country for FY", fiscal_year_selected, "Q", quarter_selected),
+  subtitle = "Pediatric (<15) Data",
+  caption = "Positivity Rate is calculated as HTS_TST_POS / HTS_TST."
+)
+
+# Linkage Rate Bar Plot
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator = "Linkage_Rate",
+  y_label = "Linkage Rate",
+  title = paste("Linkage Rate by Country for FY", fiscal_year_selected, "Q", quarter_selected),
+  subtitle = "Pediatric (<15) Data",
+  caption = "Linkage Rate is calculated as TX_NEW / HTS_TST_POS."
+)
+
+# VL Suppression Rate Bar Plot
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator = "VL_Suppression_Rate",
+  y_label = "VL Suppression Rate",
+  title = paste("VL Suppression Rate by Country for FY", fiscal_year_selected, "Q", quarter_selected),
+  subtitle = "Pediatric (<15) Data",
+  caption = "VL Suppression Rate is calculated as TX_PVLS_N / TX_PVLS_D."
+)
+
+
+```
+
+<br>
+
+
+```{r updated table}
+
+
+# Update the table to include new metrics
+summary_table <- most_recent_data %>%
+  select(
+    country,
+    `HTS_TST`,
+    `HTS_TST_POS`,
+    `Positivity_Rate`,
+    TX_CURR,
+    `TX_NEW`,
+    `Linkage_Rate`,
+    VL_Coverage_Rate,
+    `VL_Suppression_Rate`
+  ) %>%
+  arrange(
+    desc(country == country_selected),
+    desc(country == "All Combined"),
+    country
+  )
+
+# Create the table with 'All Combined' as the second row
+summary_table %>%
+  kbl(
+    caption = paste("Key Indicators by Country for FY", fiscal_year_selected, "Q", quarter_selected),
+    align = "lcccccccc"
+  ) %>%
+  kable_classic(full_width = F) %>%
+  row_spec(0, bold = TRUE) %>%  # Header row
+  row_spec(which(summary_table$country == country_selected), bold = TRUE, background = "#D3D3D3") %>%  # Highlight the selected country
+  row_spec(which(summary_table$country == "All Combined"), bold = TRUE)  # Bold the 'All Combined' row
+
+
+```
+
+
+---------------------------------------------------------------------------------
+
+## Looking at under-5 and adolescents 
+
+
+ 
+```{r, adolescent and under-5 data}
+
+
+# create this quarter data
+under5_data <- combined_95_metrics_targets_under5_usaid %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+peds_data <- combined_95_metrics_targets_peds_usaid %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+adolescent_data <- combined_95_metrics_targets_adolescent_usaid %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+
+
+# Function to calculate metrics and include targets
+calculate_metrics <- function(data, age_group_label) {
+  data %>%
+    summarise(
+      Age_Group = age_group_label,
+      HTS_TST = sum(HTS_TST, na.rm = TRUE),
+      HTS_TST_POS = sum(HTS_TST_POS, na.rm = TRUE),
+      HTS_TST_target = sum(HTS_TST_targets, na.rm = TRUE),
+      HTS_TST_POS_target = sum(HTS_TST_POS_targets, na.rm = TRUE),
+      Positivity_Rate = HTS_TST_POS / HTS_TST,
+      TX_NEW = sum(TX_NEW, na.rm = TRUE),
+      Linkage_Rate = TX_NEW / HTS_TST_POS,
+      TX_CURR = sum(TX_CURR, na.rm = TRUE),
+      TX_PVLS_D = sum(TX_PVLS_D, na.rm = TRUE),
+      TX_PVLS_N = sum(TX_PVLS_N, na.rm = TRUE),
+      VL_Suppression_Rate = TX_PVLS_N / TX_PVLS_D,
+      `% HTS_TST` = HTS_TST / HTS_TST_target,
+      `% HTS_TST_POS` = HTS_TST_POS / HTS_TST_POS_target
+    ) %>%
+    mutate_at(
+      vars(Positivity_Rate, Linkage_Rate, VL_Suppression_Rate, `% HTS_TST`, `% HTS_TST_POS`),
+      ~ ifelse(is.nan(.) | is.infinite(.) | is.na(.), NA, .)
+    )
+}
+
+
+# Calculate metrics for each age group
+under5_metrics <- calculate_metrics(under5_data, "Under 5")
+peds_metrics <- calculate_metrics(peds_data, "Pediatric (0-14)")
+adolescent_metrics <- calculate_metrics(adolescent_data, "Adolescent (10-19)")
+
+# Combine the results
+combined_metrics <- bind_rows(under5_metrics, peds_metrics, adolescent_metrics)
+
+
+# Format the metrics for display
+formatted_metrics <- combined_metrics %>%
+  select(Age_Group, HTS_TST, HTS_TST_target, HTS_TST_POS, HTS_TST_POS_target,
+         Positivity_Rate, TX_NEW, Linkage_Rate, TX_CURR, VL_Suppression_Rate) %>%
+  mutate(
+    Positivity_Rate = percent(Positivity_Rate, accuracy = 0.1),
+    Linkage_Rate = percent(Linkage_Rate, accuracy = 0.1),
+    VL_Suppression_Rate = percent(VL_Suppression_Rate, accuracy = 0.1)
+  )
+
+# Display the updated summary table
+formatted_metrics %>%
+  kbl(
+    caption = paste("Key Metrics Comparison for", country_selected, "in FY", fiscal_year_selected, "Q", quarter_selected),
+    col.names = c("Age Group", "HTS_TST", "HTS_TST Target", "HTS_TST_POS", "HTS_TST_POS Target",
+                  "Positivity Rate", "TX_NEW", "Linkage Rate", "TX_CURR", "VL Suppression Rate"),
+    align = "lccccccccc"
+  ) %>%
+  kable_styling(full_width = FALSE)
+
+
+
+# Prepare data for plotting
+plot_data <- combined_metrics %>%
+  select(Age_Group, Positivity_Rate, Linkage_Rate, VL_Suppression_Rate) %>%
+  pivot_longer(
+    cols = -Age_Group,
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# Map metric names for better readability
+metric_labels <- c(
+  "Positivity_Rate" = "Positivity Rate",
+  "Linkage_Rate" = "Linkage Rate",
+  "VL_Suppression_Rate" = "VL Suppression Rate"
+)
+
+plot_data$Metric <- recode(plot_data$Metric, !!!metric_labels)
+
+# Set the order of Metric levels to Positivity Rate, Linkage Rate, VL Suppression Rate
+plot_data$Metric <- factor(plot_data$Metric, levels = c("Positivity Rate", "Linkage Rate", "VL Suppression Rate"))
+
+# Set the order of Age_Group levels to Under 5, Pediatric (0-14), Adolescent (10-19)
+plot_data$Age_Group <- factor(plot_data$Age_Group, levels = c("Under 5", "Pediatric (0-14)", "Adolescent (10-19)"))
+
+
+# create the plot
+ggplot(plot_data, aes(x = Metric, y = Value, fill = Age_Group)) +
+  geom_bar(
+    position = position_dodge(width = 0.8),
+    stat = "identity",
+    width = 0.7
+  ) +
+  # Add text labels on the bars
+  geom_text(
+    aes(label = scales::percent(Value, accuracy = 0.1)),
+    position = position_dodge(width = 0.8),
+    vjust = -0.5,
+    size = 3
+  ) +
+  # Customizing the y-axis to create a visual break between low and high values
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    breaks = c(0, 0.1, 0.5, 1),  # Define specific breaks
+    limits = c(0, 1.1),          # Ensure all values fit
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  labs(
+    title = paste("Comparison of Key Metrics by Age Group in", country_selected),
+    subtitle = paste("Fiscal Year:", fiscal_year_selected, "| Quarter:", quarter_selected),
+    x = "Metric",
+    y = "Rate",
+    fill = "Age Group"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),  # Rotated for better readability
+    axis.text.y = element_text(size = 10),                         # Adjusted y-axis text size
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, face = "italic"),
+    legend.position = "top",                                       # Move legend to the top
+    legend.title = element_text(face = "bold")
+  ) +
+  scale_fill_manual(values = c(
+    "Under 5" = "#5BB5D5",           # Viking
+    "Pediatric (0-14)" = "#F36428",  # Tango
+    "Adolescent (10-19)" = "#15478A"              # Midnight Blue
+  ))
+
+
+
+```
+  
+
+
+<br>
+---------------------------------------------------------------------------------
+
+## Looking at gender
+
+ 
+```{r, gendered adolescent and under-5 data, fig.width=12, fig.height=10}
+
+
+under5_data <- combined_95_metrics_targets_under5_usaid_gender %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+peds_data <- combined_95_metrics_targets_peds_usaid_gender %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+adolescent_data <- combined_95_metrics_targets_adolescent_usaid_gender %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+# Function to calculate metrics by age group and sex
+calculate_metrics <- function(data, age_group_label) {
+  data %>%
+    group_by(sex) %>%
+    summarise(
+      HTS_TST = sum(HTS_TST, na.rm = TRUE),
+      HTS_TST_POS = sum(HTS_TST_POS, na.rm = TRUE),
+      HTS_TST_target = sum(HTS_TST_targets, na.rm = TRUE),
+      HTS_TST_POS_target = sum(HTS_TST_POS_targets, na.rm = TRUE),
+      Positivity_Rate = HTS_TST_POS / HTS_TST,
+      TX_NEW = sum(TX_NEW, na.rm = TRUE),
+      Linkage_Rate = TX_NEW / HTS_TST_POS,
+      TX_CURR = sum(TX_CURR, na.rm = TRUE),
+      TX_PVLS_D = sum(TX_PVLS_D, na.rm = TRUE),
+      TX_PVLS_N = sum(TX_PVLS_N, na.rm = TRUE),
+      VL_Suppression_Rate = TX_PVLS_N / TX_PVLS_D,
+      `% HTS_TST` = HTS_TST / HTS_TST_target,
+      `% HTS_TST_POS` = HTS_TST_POS / HTS_TST_POS_target,
+      .groups = "drop"
+    ) %>%
+    mutate_at(
+      vars(Positivity_Rate, Linkage_Rate, VL_Suppression_Rate, `% HTS_TST`, `% HTS_TST_POS`),
+      ~ ifelse(is.nan(.) | is.infinite(.) | is.na(.), NA, .)
+    ) %>%
+    mutate(Age_Group = age_group_label)
+}
+
+# Calculate metrics for each age group
+under5_metrics <- calculate_metrics(under5_data, "Under 5")
+peds_metrics <- calculate_metrics(peds_data, "Pediatric (0-14)")
+adolescent_metrics <- calculate_metrics(adolescent_data, "Adolescent (10-19)")
+
+# Combine the results
+combined_metrics <- bind_rows(under5_metrics, peds_metrics, adolescent_metrics)
+
+# Format the metrics for display (now includes sex)
+formatted_metrics <- combined_metrics %>%
+  select(Age_Group, sex, HTS_TST, HTS_TST_target, HTS_TST_POS, HTS_TST_POS_target,
+         Positivity_Rate, TX_NEW, Linkage_Rate, TX_CURR, VL_Suppression_Rate) %>%
+  mutate(
+    Positivity_Rate = percent(Positivity_Rate, accuracy = 0.1),
+    Linkage_Rate = percent(Linkage_Rate, accuracy = 0.1),
+    VL_Suppression_Rate = percent(VL_Suppression_Rate, accuracy = 0.1)
+  )
+
+# Display the updated summary table
+formatted_metrics %>%
+  kbl(
+    caption = paste("Key Metrics Comparison by Sex for", country_selected, "in FY", fiscal_year_selected, "Q", quarter_selected),
+    col.names = c("Age Group", "Sex", "HTS_TST", "HTS_TST Target", "HTS_TST_POS", "HTS_TST_POS Target",
+                  "Positivity Rate", "TX_NEW", "Linkage Rate", "TX_CURR", "VL Suppression Rate"),
+    align = "lcccccccccc"
+  ) %>%
+  kable_styling(full_width = FALSE)
+
+# Prepare data for plotting (include sex)
+plot_data <- combined_metrics %>%
+  select(Age_Group, sex, Positivity_Rate, Linkage_Rate, VL_Suppression_Rate) %>%
+  pivot_longer(
+    cols = c(Positivity_Rate, Linkage_Rate, VL_Suppression_Rate),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# Map metric names for better readability
+metric_labels <- c(
+  "Positivity_Rate" = "Positivity Rate",
+  "Linkage_Rate" = "Linkage Rate",
+  "VL_Suppression_Rate" = "VL Suppression Rate"
+)
+plot_data$Metric <- recode(plot_data$Metric, !!!metric_labels)
+
+# Set factor levels
+plot_data$Metric <- factor(plot_data$Metric, levels = c("Positivity Rate", "Linkage Rate", "VL Suppression Rate"))
+plot_data$Age_Group <- factor(plot_data$Age_Group, levels = c("Under 5", "Pediatric (0-14)", "Adolescent (10-19)"))
+
+
+ggplot(plot_data, aes(x = Metric, y = Value, fill = sex)) +
+  geom_bar(
+    position = position_dodge(width = 0.8),
+    stat = "identity",
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = scales::percent(Value, accuracy = 0.1)),
+    position = position_dodge(width = 0.8),
+    vjust = -0.5,
+    size = 3
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    breaks = c(0, 0.1, 0.5, 1),  # Add specific breaks for better readability
+    limits = c(0, 1.1),          # Ensure all bars and labels fit within the y-axis
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  labs(
+    title = paste("Comparison of Key Metrics by Age Group and Sex in", country_selected),
+    subtitle = paste("Fiscal Year:", fiscal_year_selected, "| Quarter:", quarter_selected),
+    x = "Metric",
+    y = "Rate",
+    fill = "Sex",
+    caption = "Data shows Positivity Rate, Linkage Rate, and VL Suppression Rate."
+  ) +
+  facet_wrap(~ Age_Group, ncol = 1, scales = "free_y") +  # Separate facets for each Age Group
+  theme_classic(base_size = 14) +
+  theme(
+    legend.position = "top",
+    legend.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),  # Rotated for readability
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5, face = "italic"),
+    plot.caption = element_text(size = 10, hjust = 0, face = "italic"),
+    strip.text = element_text(face = "bold", size = 12)  # Bold facet labels
+  ) +
+  scale_fill_manual(values = c(
+    "Female" = "#E14BA1",  # Orchid Bloom
+    "Male" = "#5BB5D5"     # Viking
+  ))
+
+
+```
+  
+
+
+
+
+<br>
+---------------------------------------------------------------------------------
+
+## Looking at prime partners  
+
+
+```{r, prime partners table, fig.width=12, fig.height=8}
+
+
+# Filter data for the selected country, fiscal year, and quarter
+prime_partner_data <- combined_95_metrics_targets_peds_usaid_pp %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+# Summarize key metrics by prime_partner_name
+prime_partner_data <- prime_partner_data %>%
+  arrange(desc(TX_CURR))
+
+
+# Format the metrics for better readability
+prime_partner_summary <- prime_partner_data %>%
+  mutate(
+    HTS_TST = scales::comma(HTS_TST),
+    HTS_TST_targets = scales::comma(HTS_TST_targets),
+    HTS_TST_POS = scales::comma(HTS_TST_POS),
+    HTS_TST_POS_targets = scales::comma(HTS_TST_POS_targets),
+    Positivity_Rate = percent(Positivity_Rate, accuracy = 0.1),
+    Linkage_Rate = percent(Linkage_Rate, accuracy = 0.1),
+    VL_Coverage_Rate = percent(VL_Coverage_Rate, accuracy = 0.1), 
+    VL_Suppression_Rate = percent(VL_Suppression_Rate, accuracy = 0.1),
+    TX_CURR = scales::comma(TX_CURR)
+  )
+
+
+# Display the table
+prime_partner_summary %>%
+  select(
+    prime_partner_name, HTS_TST, HTS_TST_targets, HTS_TST_POS, HTS_TST_POS_targets,
+    Positivity_Rate, TX_CURR, Linkage_Rate, VL_Coverage_Rate, VL_Suppression_Rate
+  ) %>%  
+  kbl(
+    caption = paste("Prime Partner Performance in", country_selected, "for FY", fiscal_year_selected, "Q", quarter_selected),
+    col.names = c("prime_partner_name", "HTS_TST", "HTS_TST_targets", "HTS_TST_POS", "HTS_TST_POS_targets",
+                  "Positivity_Rate", "TX_CURR", "Linkage_Rate", 'VL_Coverage_Rate', 'VL_Suppression_Rate'),
+    align = "lccccccccc"
+  ) %>%
+  kable_styling(full_width = FALSE) %>%
+  row_spec(0, bold = TRUE)  # Make the header row bold
+
+
+
+
+
+
+```
+
+<br>
+
+```{r trned line plot HTS prime partner, fig.width=12, fig.height=8}
+
+
+# Prepare data for the trend line chart
+trend_data <- combined_95_metrics_targets_peds_usaid_pp %>%
+  filter(
+    fiscal_year < fiscal_year_selected | 
+      (fiscal_year == fiscal_year_selected & quarter_num <= quarter_selected)
+  ) %>%
+  filter(country == country_selected) %>% 
+  select(fiscal_year, quarter_num, prime_partner_name, HTS_TST_POS, VL_Suppression_Rate, TX_CURR) %>%
+  mutate(
+    time = paste0("FY", fiscal_year, " Q", quarter_num),
+    time = factor(time, levels = unique(time))
+  )
+
+
+
+ggplot(trend_data, aes(x = time, y = HTS_TST_POS, color = prime_partner_name, group = prime_partner_name)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  labs(
+    title = "Trend of HTS_TST_POS by Prime Partner",
+    subtitle = paste("Data for FY", fiscal_year_selected, "| Quarter", quarter_selected),
+    y = "HTS_TST_POS (Tested Positive)",
+    color = "Prime Partner"
+  ) +
+  scale_y_continuous(
+    labels = scales::comma_format(),
+    expand = expansion(mult = c(0, 0.1)),  # Adds some space above the highest value
+    limits = c(0, NA)
+  ) +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +  # Angle x-axis labels for better readability
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 18, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, face = "italic", hjust = 0.5),
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    legend.position = "right",  # Place legend on the right for cleaner layout
+    legend.text = element_text(size = 9),
+    legend.title = element_text(face = "bold")
+  )
+
+
+```
+
+
+<br>
+
+```{r, fig.width=12, fig.height=8}
+
+
+ggplot(trend_data, aes(
+  x = time, 
+  y = VL_Suppression_Rate, 
+  color = prime_partner_name, 
+  group = prime_partner_name, 
+  size = TX_CURR
+)) +
+  geom_line(size = 1) +  # Keep lines fixed in size
+  geom_point() +  # Point size will vary by TX_CURR
+  labs(
+    title = "Trend of VL_Suppression_Rate by Prime Partner",
+    y = "VL_Suppression_Rate",
+    color = "Prime Partner",
+    size = "TX_CURR"  # Legend for size mapping
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),  # Format as percentages
+    limits = c(0.50, 1.00)  # Set limits for y-axis
+  ) +
+  scale_size_continuous(range = c(2, 8)) +  # Set min and max point size
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(face = "bold")
+  )
+
+
+
+```
+
+<br>
+
+------------------------------------------------------------------------------------
+
+## Looking at SNU1
+
+```{r, snu1 table, fig.width=12, fig.height=8}
+
+
+# Filter data for the selected country, fiscal year, and quarter
+snu1_data <- combined_95_metrics_targets_peds_usaid_snu1 %>%
+  filter(country == country_selected,
+         fiscal_year == fiscal_year_selected,
+         quarter_num == quarter_selected)
+
+
+# Summarize key metrics by prime_partner_name
+snu1_data <- snu1_data %>%
+  arrange(desc(TX_CURR))
+
+
+# Format the metrics for better readability
+snu1_summary <- snu1_data %>%
+  mutate(
+    HTS_TST = scales::comma(HTS_TST),
+    HTS_TST_targets = scales::comma(HTS_TST_targets),
+    HTS_TST_POS = scales::comma(HTS_TST_POS),
+    HTS_TST_POS_targets = scales::comma(HTS_TST_POS_targets),
+    Positivity_Rate = percent(Positivity_Rate, accuracy = 0.1),
+    Linkage_Rate = percent(Linkage_Rate, accuracy = 0.1),
+    VL_Coverage_Rate = percent(VL_Coverage_Rate, accuracy = 0.1), 
+    VL_Suppression_Rate = percent(VL_Suppression_Rate, accuracy = 0.1),
+    TX_CURR = scales::comma(TX_CURR)
+  )
+
+
+
+# Display the updated table
+snu1_summary %>%
+  select(
+    snu1, HTS_TST, HTS_TST_targets, HTS_TST_POS, HTS_TST_POS_targets,
+    Positivity_Rate, TX_CURR, Linkage_Rate, VL_Coverage_Rate, VL_Suppression_Rate
+  ) %>%  
+  kbl(
+    caption = paste("SNU1 Performance in", country_selected, "for FY", fiscal_year_selected, "Q", quarter_selected),
+    col.names = c("snu1", "HTS_TST", "HTS_TST_targets", "HTS_TST_POS", "HTS_TST_POS_targets",
+                  "Positivity_Rate", "TX_CURR", "Linkage_Rate", 'VL_Coverage_Rate', 'VL_Suppression_Rate'),
+    align = "lccccccccc"
+  ) %>%
+  kable_styling(full_width = FALSE) %>%
+  row_spec(0, bold = TRUE)  # Make the header row bold
+
+
+
+
+
+```
+
+<br>
+
+```{r trend plot snu1 HTS, fig.width=12, fig.height=8}
+
+
+# Prepare data for the trend line chart
+trend_data <- combined_95_metrics_targets_peds_usaid_snu1 %>%
+  filter(
+    fiscal_year < fiscal_year_selected | 
+      (fiscal_year == fiscal_year_selected & quarter_num <= quarter_selected)
+  ) %>%
+  filter(country == country_selected) %>% 
+  select(fiscal_year, quarter_num, snu1, HTS_TST_POS, VL_Suppression_Rate, TX_CURR) %>%
+  mutate(
+    time = paste0("FY", fiscal_year, " Q", quarter_num),
+    time = factor(time, levels = unique(time))
+  )
+
+
+# Create the trend line chart
+ggplot(trend_data, aes(
+  x = time, 
+  y = HTS_TST_POS, 
+  color = snu1, 
+  group = snu1
+)) +
+  geom_line(size = 1) +  # Keep lines fixed in size
+  geom_point() +  # Point size will vary by TX_CURR
+  labs(
+    title = "Trend of HTS_TST_POS by SNU1",
+    y = "HTS_TST_POS",
+    color = "Prime Partner",
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(face = "bold")
+  )
+
+
+```
+
+<br>
+  
+```{r snu1 trend plot viral suppression, fig.width=12, fig.height=8}
+
+
+# Create the trend line chart
+ggplot(trend_data, aes(
+  x = time, 
+  y = VL_Suppression_Rate, 
+  color = snu1, 
+  group = snu1, 
+  size = TX_CURR
+)) +
+  geom_line(size = 1) +  # Keep lines fixed in size
+  geom_point() +  # Point size will vary by TX_CURR
+  labs(
+    title = "Trend of VL_Suppression_Rate by SNU1",
+    y = "VL_Suppression_Rate",
+    color = "SNU1",
+    size = "TX_CURR"  # Legend for size mapping
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),  # Format as percentages
+    limits = c(0.50, 1.00)  # Set limits for y-axis
+  ) +
+  scale_size_continuous(range = c(2, 8)) +  # Set min and max point size
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.text = element_text(size = 8),
+    legend.title = element_text(face = "bold")
+  )
+
+
+```
+
+
+
+<br>
+<br>
+<br>
+<br>
+
+-------------------------------------------------------------------------
+
+
+
+
+## Appendix
+
+### Narrative reports for selected indicators
+
+
+```{r, UNAIDS data, fig.height=6, fig.width=12}
+
+UNAIDS_2024_Clean_Estimates = read_rds('C:/Users/georg/Desktop/databases/UNAIDS_2024_Clean_Estimates.rds')
+
+UNAIDS_country_2023 <- UNAIDS_2024_Clean_Estimates %>%
+  filter(
+    country == country_selected,
+    year == 2023,
+    indicator %in% c(
+      "Percent Known Status of PLHIV",
+      "Percent on ART with Known Status",
+      "Percent VLS on ART"
+    ),
+    ((age == "0-14" & sex == "All") |
+       (age == "15+" & sex %in% c("Female", "Male")))
+  ) %>%
+  mutate(indicator = factor(indicator, levels = c(
+    "Percent Known Status of PLHIV",
+    "Percent on ART with Known Status",
+    "Percent VLS on ART"
+  ),
+  labels = c(
+    "Known Status (1st 95)",
+    "On ART (2nd 95)",
+    "VLS (3rd 95)"
+  )))
+
+# Define custom colors using recommended palette
+custom_colors <- c(
+  "All" = "#15478A",    # midnight_blue
+  "Female" = "#E14BA1", # orchid_bloom
+  "Male" = "#5BB5D5"    # viking
+)
+
+ggplot(UNAIDS_country_2023, aes(x = indicator, y = estimate, fill = sex)) +
+  geom_col(position = position_dodge(width = 0.9)) +
+  geom_text(
+    aes(label = round(estimate, 1)),
+    position = position_dodge(width = 0.9),
+    vjust = -0.5,
+    size = 4
+  ) +
+  geom_hline(yintercept = 95, linetype = "dotted", color = "red", size = 1) +
+  facet_wrap(~ age, scales = "free_x", nrow = 1) +
+  scale_fill_manual(values = custom_colors) +
+  labs(
+    title = paste("UNAIDS 95-95-95 Indicators for", country_selected, "2023"),
+    x = "Indicator",
+    y = "Percentage",
+    fill = "Sex",
+    caption = "Source: unaids.org"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+
+
+
+
+
+```
+
+### PEPFAR Data for Adults (15+) 
+
+
+```{r}
+
+load(file = 'C:/Users/georg/Desktop/databases/output/Genie_OU_long.rda')
+
+
+# Step 1: Prepare data for the 1st 95 (Positivity)
+positivity_data <- Genie_OU_long %>%
+  filter(
+    indicator %in% c("HTS_TST", "HTS_TST_POS"),  # Relevant indicators
+    country == country_selected                  # Filter for selected country
+  ) %>%
+  group_by(indicator) %>%
+  summarise(total_value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = indicator, values_from = total_value) %>%
+  mutate(
+    value = HTS_TST_POS / HTS_TST,
+    metric = "Positivity"
+  ) %>%
+  select(metric, value)
+
+# Step 2: Prepare data for the 2nd 95 (Proxy Linkage)
+proxy_linkage_data <- Genie_OU_long %>%
+  filter(
+    indicator %in% c("TX_NEW", "HTS_TST_POS"),  # Relevant indicators
+    country == country_selected                # Filter for selected country
+  ) %>%
+  group_by(indicator) %>%
+  summarise(total_value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = indicator, values_from = total_value) %>%
+  mutate(
+    value = TX_NEW / HTS_TST_POS,
+    metric = "Proxy Linkage"
+  ) %>%
+  select(metric, value)
+
+# Step 3: Prepare data for the 3rd 95 (VL Suppression)
+vl_suppression_data <- Genie_OU_long %>%
+  filter(
+    trendscoarse == "15+",       # Only adults
+    indicator == "TX_PVLS",      # Only TX_PVLS indicator
+    country == country_selected  # Filter for selected country
+  ) %>%
+  group_by(numeratordenom) %>%
+  summarise(total_value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = numeratordenom, values_from = total_value, names_prefix = "TX_PVLS_") %>%
+  mutate(
+    value = TX_PVLS_N / TX_PVLS_D,
+    metric = "VL Suppression"
+  ) %>%
+  select(metric, value)
+
+# Step 4: Combine all three metrics into one dataframe
+clinical_cascade_data <- bind_rows(positivity_data, proxy_linkage_data, vl_suppression_data)
+
+# Step 5: Create a grouped bar plot
+ggplot(clinical_cascade_data, aes(x = metric, y = value, fill = metric)) +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(label = scales::percent(value, accuracy = 0.1)), 
+    vjust = -0.5, size = 4
+  ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+  scale_fill_manual(values = c(
+    "Positivity" = "#5BB5D5",  # Viking
+    "Proxy Linkage" = "#F36428",  # Tango
+    "VL Suppression" = "#15478A"  # Midnight Blue
+  )) +
+  labs(
+    title = paste("Clinical Cascade for Adults in", country_selected),
+    subtitle = "FY2024 Q4",
+    x = "Clinical Cascade Metrics",
+    y = "Percentage",
+    caption = "Source: Genie OU Data"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, face = "italic", hjust = 0.5),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 10),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+
+
+```
+
+
+
+
+
+### Narrative reports for selected indicators
+
+```{r, Narrative reports, fig.width=12}
+
+
+# Define the base directory
+base_dir <- "C://Users/georg/Desktop/databases/Narratives from Panorama/"
+
+# Construct the filename dynamically based on fiscal year and quarter
+file_name <- paste0("Narratives FY", fiscal_year_selected, " Q", quarter_selected, " Clean.xlsx")
+
+# Construct the full file path
+file_path <- file.path(base_dir, file_name)
+
+# Load the Excel file
+narratives_data <- read_excel(file_path)
+
+narratives_data_usaid = narratives_data %>% 
+  filter(`Funding Agency` == 'USAID') %>% 
+  filter(Country == country_selected)
+ 
+
+# Define the indicators of interest
+indicators_of_interest <- c(
+  "HTS_INDEX", "HTS_TST", "PMTCT_ART", "PMTCT_EID", "PMTCT_STAT",
+  "PrEP+CY", "PrEP_NEW", "TX_CURR", "TX_NEW", "TX_PVLS", "TX_RTT"
+)
+
+# Filter and format the data
+narrative_table <- narratives_data_usaid %>%
+  filter(Indicator %in% indicators_of_interest) %>% 
+  select(
+    Indicator,
+    `Funding Mechanism`,
+    `Fiscal Quarter`,
+    Narrative
+  ) %>%
+  arrange(Indicator)
+
+if(nrow(narrative_table) > 0) {
+# Render the table
+narrative_table %>%
+  kbl(
+    caption = paste("Narratives for Selected Indicators in", country_selected, "FY", fiscal_year_selected, "Q", quarter_selected),
+    col.names = c("Indicator", "Funding Mechanism", "Fiscal Quarter", "Narrative"),
+    align = "lccl"
+  ) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(4, width = "60em")  # Adjust column width for Narrative
+} else {
+  message('No narrative data found for country selected.')
+}
+
+```
+
+
+
