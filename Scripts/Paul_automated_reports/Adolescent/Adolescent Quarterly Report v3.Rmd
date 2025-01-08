@@ -1,0 +1,1207 @@
+---
+title: "`r paste(' Adolescent Overview Report:', '- FY', params$fiscal_year, 'Quarter', params$quarter)`"
+output: html_document
+params:
+  fiscal_year: 2024
+  quarter: 4
+---
+
+
+### All charts and tables use USAID-specific data from the Africa region, Haiti, and the Dominican Republic. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+###################### INTRODUCTION ---------------------------------------------------
+
+# Steps for creating the automated adolescent general report:
+    #1. Download the OUxIM country file combined 
+    #2. Run creating adult peds adol df by country.R file to create the summary dataframes 
+    #3. Run the RMarkdown file to generate the report   ***** this code represents this step *****
+
+library(tidyverse)
+library(ggplot2)
+library(kableExtra)
+library(knitr)
+library(scales)
+
+
+rm(list = ls())
+
+load(file = 'C:/Users/georg/Desktop/databases/output/adult_adol_peds_OU/OU_adult_peds_adol_all_df_gender.rda')
+
+
+
+# Replace Inf and -Inf with NA across all columns in the dataframe
+OU_adult_peds_adol_all_df_gender[] <- lapply(OU_adult_peds_adol_all_df_gender, function(col) {
+  if (is.numeric(col)) {
+    col[is.infinite(col)] <- NA
+  }
+  return(col)
+})
+
+
+# Summarize data for 'ALL' country
+all_rows <- OU_adult_peds_adol_all_df_gender %>%
+  group_by(country, fiscal_year, quarter, age_group) %>%
+  summarize(
+    HTS_TST_N = sum(HTS_TST_N, na.rm = TRUE),
+    HTS_TST_POS_N = sum(HTS_TST_POS_N, na.rm = TRUE),
+    TX_CURR_Lag2_N = sum(TX_CURR_Lag2_N, na.rm = TRUE),
+    TX_CURR_N = sum(TX_CURR_N, na.rm = TRUE),
+    TX_ML_N = sum(TX_ML_N, na.rm = TRUE),
+    TX_NET_NEW_SHIFT_N = sum(TX_NET_NEW_SHIFT_N, na.rm = TRUE),
+    TX_NEW_N = sum(TX_NEW_N, na.rm = TRUE),
+    TX_PVLS_D = sum(TX_PVLS_D, na.rm = TRUE),
+    TX_PVLS_N = sum(TX_PVLS_N, na.rm = TRUE),
+    PrEP_NEW_N = sum(PrEP_NEW_N, na.rm = TRUE),
+    PrEP_CT_N = sum(PrEP_CT_N, na.rm = TRUE),
+    PrEP_CURR_N = sum(PrEP_CURR_N, na.rm = TRUE),
+    Proxy_Linkage = sum(TX_NEW_N, na.rm = TRUE) / sum(HTS_TST_POS_N, na.rm = TRUE),
+    Proxy_Continuity = sum(TX_CURR_N, na.rm = TRUE) / (sum(TX_CURR_N, na.rm = TRUE) - sum(TX_NET_NEW_SHIFT_N, na.rm = TRUE) + sum(TX_NEW_N, na.rm = TRUE)),
+    Proxy_VL_Coverage = sum(TX_PVLS_D, na.rm = TRUE) / sum(TX_CURR_Lag2_N, na.rm = TRUE),
+    Viral_Suppression = sum(TX_PVLS_N, na.rm = TRUE) / sum(TX_PVLS_D, na.rm = TRUE),
+    Proxy_Positivity = sum(HTS_TST_POS_N, na.rm = TRUE) / sum(HTS_TST_N, na.rm = TRUE),
+    Numbers_Needed_to_Test = sum(HTS_TST_N, na.rm = TRUE) / sum(HTS_TST_POS_N, na.rm = TRUE),
+    TX_CURR_ARVDisp_less_three_mo_N = sum(TX_CURR_ARVDisp_less_three_mo_N, na.rm = TRUE), 
+    TX_CURR_ARVDisp_six_more_mo_N = sum(TX_CURR_ARVDisp_six_more_mo_N, na.rm = TRUE), 
+    TX_CURR_ARVDisp_three_five_mo_N = sum(TX_CURR_ARVDisp_three_five_mo_N, na.rm = TRUE), 
+    funding_agency == 'USAID',
+    .groups = "drop"
+  ) %>%
+  mutate(
+    across(
+      c(HTS_TST_N, HTS_TST_POS_N, TX_CURR_Lag2_N, TX_CURR_N, TX_ML_N, PrEP_CT_N, PrEP_NEW_N, PrEP_CURR_N, 
+        TX_NET_NEW_SHIFT_N, TX_NEW_N, TX_PVLS_D, TX_PVLS_N, 
+        TX_CURR_ARVDisp_less_three_mo_N, TX_CURR_ARVDisp_six_more_mo_N, 
+        TX_CURR_ARVDisp_three_five_mo_N),
+      ~ ifelse(. == 0, NA, .)
+    )
+  ) %>% 
+  mutate(sex = 'Both male and female') %>% 
+  relocate(country, fiscal_year, quarter)
+
+all_rows <- all_rows %>%
+  mutate(
+    # Calculate the total ARV dispensed
+    total_ARV_dispensed = TX_CURR_ARVDisp_six_more_mo_N +
+      TX_CURR_ARVDisp_three_five_mo_N +
+      TX_CURR_ARVDisp_less_three_mo_N,
+    
+    # Calculate MMD_3_month
+    MMD_3_month = (TX_CURR_ARVDisp_six_more_mo_N + TX_CURR_ARVDisp_three_five_mo_N) /
+      total_ARV_dispensed * 100,
+    
+    # Calculate MMD_6_month
+    MMD_6_month = TX_CURR_ARVDisp_six_more_mo_N / total_ARV_dispensed * 100
+  )
+
+
+
+OU_adult_peds_adol_all_df_gender = OU_adult_peds_adol_all_df_gender %>% 
+  bind_rows(all_rows) %>% 
+  arrange(country, fiscal_year, quarter, age_group, sex)
+
+
+OU_adult_peds_adol_all_df_gender <- OU_adult_peds_adol_all_df_gender %>%
+  mutate(
+    Proxy_Linkage = Proxy_Linkage * 100,
+    Proxy_Continuity = Proxy_Continuity * 100,
+    Proxy_VL_Coverage = Proxy_VL_Coverage * 100,
+    Viral_Suppression = Viral_Suppression * 100,
+    Proxy_Positivity = Proxy_Positivity * 100
+  )
+
+
+# Get the current date and time
+creation_time <- Sys.time()
+formatted_time <- format(creation_time, "%Y-%m-%d %H:%M:%S")
+
+```
+
+`r formatted_time`
+
+<br> 
+
+
+```{r summary table}
+
+### Summary stats by adults vs adolescents vs pediatrics --------------------------------------------------
+
+# Filter and summarize the data for country == 'ALL', FY2024, Q4
+table_all_fy2024_q4 <- OU_adult_peds_adol_all_df_gender %>%
+  filter(country == "ALL", fiscal_year == 2024, quarter == "4") %>%
+  select(
+    fiscal_year, quarter, age_group, sex, HTS_TST_N, HTS_TST_POS_N, Numbers_Needed_to_Test, Proxy_Positivity, 
+    Proxy_Linkage,  Proxy_VL_Coverage,
+    Viral_Suppression,  TX_CURR_N, Proxy_Continuity, MMD_3_month, MMD_6_month
+  ) %>%
+  rename(
+    `Age Group` = age_group,
+    `HTS Tested` = HTS_TST_N,
+    `HTS Positives` = HTS_TST_POS_N,
+    `TX Curr` = TX_CURR_N,
+    `Proxy Linkage` = Proxy_Linkage,
+    `Proxy Continuity` = Proxy_Continuity,
+    `Viral Coverage` = Proxy_VL_Coverage,
+    `Viral Suppression` = Viral_Suppression,
+    `Positivity` = Proxy_Positivity,
+    `Numbers Needed to Test` = Numbers_Needed_to_Test, 
+    `MMD >= 3 months` = MMD_3_month, 
+    `MMD >= 6 months` = MMD_6_month
+  )
+
+
+
+
+# Extract metrics for age_group == "peds"
+adolescent_metrics <- table_all_fy2024_q4 %>%
+  filter(`Age Group` == "adolescent", 
+         sex == 'Both male and female')
+
+# Assign each metric to individual variables
+total_HTS_TST <- adolescent_metrics$`HTS Tested`
+total_HTS_TST_POS <- adolescent_metrics$`HTS Positives`
+total_TX_CURR_N <- adolescent_metrics$`TX Curr`
+total_linkage <- adolescent_metrics$`Proxy Linkage`
+total_coverage <- adolescent_metrics$`Viral Coverage`
+total_suppression <- adolescent_metrics$`Viral Suppression`
+
+# Format numbers with commas and convert to character strings
+total_HTS_TST  <- comma(total_HTS_TST, accuracy = 1)
+total_HTS_TST_POS  <- comma(total_HTS_TST_POS, accuracy = 1)
+total_TX_CURR_N  <- comma(total_TX_CURR_N, accuracy = 1)
+total_linkage  <- comma(total_linkage, accuracy = 0.1)
+total_coverage  <- comma(total_coverage, accuracy = 0.1)
+total_suppression  <- comma(total_suppression, accuracy = 0.1)
+```
+
+<br> 
+
+## Summary for FY2024 Q4 - Adolescents (10-19 years)
+
+For **FY2024 Q4**, the following key metrics for the **Adolescent (10-19 years) age group (Africa data)** were achieved:
+
+- **HTS Tested:** `r total_HTS_TST`
+- **HTS Positives:** `r total_HTS_TST_POS`
+- **Current on Treatment (TX Curr):** `r total_TX_CURR_N`
+- **Linkage:** `r total_linkage`%
+- **Viral Coverage:** `r total_coverage`%
+- **Viral Suppression:** `r total_suppression`%
+
+
+```{r sum table with Kable extra}
+
+table_all_fy2024_q4 <- table_all_fy2024_q4 %>%
+  mutate(
+    sex = factor(
+      sex,
+      levels = c("Both male and female", "Female", "Male")
+    )
+  )
+
+
+# Create a nice-looking table with kableExtra
+table_all_fy2024_q4 %>%
+  filter(`Age Group` == 'adolescent' | sex == 'Both male and female') %>% 
+  select(c(-`MMD >= 3 months`, -`MMD >= 6 months`)) %>% 
+  kbl(caption = "Metrics Breakdown by Age Group for FY2024 Q4", digits = 1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>%
+  column_spec(1, bold = TRUE)
+
+```
+
+
+```{r trend graph, fig.height=6, fig.width=10}
+
+### Trend graph of linkage, coverage, suppression across time -----------------------------------------------------------
+
+
+
+# Filter and prepare the data
+trend_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(country == "ALL", 
+         sex %in% c('Male', 'Female')) %>%
+  select(fiscal_year, quarter, age_group, sex, Proxy_VL_Coverage, Proxy_Linkage, Viral_Suppression) %>%
+  mutate(
+    Time = paste0("FY", fiscal_year, " Q", quarter),
+    Time = factor(Time, levels = unique(Time)) # Ensure chronological order
+  ) %>%
+  pivot_longer(
+    cols = c(Proxy_VL_Coverage, Proxy_Linkage, Viral_Suppression),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+
+# Extract most recent data points
+# Ensure Time is treated as a character or numeric for comparison
+most_recent_linkage <- trend_data %>% 
+  filter(age_group == 'adolescent') %>% 
+  filter(Metric == 'Proxy_Linkage') %>% 
+  mutate(Time = as.character(Time)) %>% # Convert Time to character
+  group_by(Metric, sex) %>%
+  filter(Time == max(Time)) %>% # Compare on character values
+  summarize(Value = last(Value), .groups = "drop") %>%
+  mutate(
+    Metric_Label = recode(Metric,
+                          Proxy_VL_Coverage = "Coverage",
+                          Proxy_Linkage = "Linkage",
+                          Viral_Suppression = "Suppression"
+    ),
+    Text = paste(Metric_Label, "(", sex, "): ", round(Value, 1), sep = "")
+  )
+
+# Combine text for display
+text_box_content_linkage <- paste(most_recent_linkage$Text, collapse = "\n")
+
+
+# Ensure Time is treated as a character or numeric for comparison
+most_recent_coverage <- trend_data %>% 
+  filter(age_group == 'adolescent') %>% 
+  filter(Metric == 'Proxy_VL_Coverage') %>% 
+  mutate(Time = as.character(Time)) %>% # Convert Time to character
+  group_by(Metric, sex) %>%
+  filter(Time == max(Time)) %>% # Compare on character values
+  summarize(Value = last(Value), .groups = "drop") %>%
+  mutate(
+    Metric_Label = recode(Metric,
+                          Proxy_VL_Coverage = "Coverage",
+                          Proxy_Linkage = "Linkage",
+                          Viral_Suppression = "Suppression"
+    ),
+    Text = paste(Metric_Label, "(", sex, "): ", round(Value, 1), sep = "")
+  )
+
+# Combine text for display
+text_box_content_coverage <- paste(most_recent_coverage$Text, collapse = "\n")
+
+
+# Ensure Time is treated as a character or numeric for comparison
+most_recent_suppression <- trend_data %>% 
+  filter(age_group == 'adolescent') %>% 
+  filter(Metric == 'Viral_Suppression') %>% 
+  mutate(Time = as.character(Time)) %>% # Convert Time to character
+  group_by(Metric, sex) %>%
+  filter(Time == max(Time)) %>% # Compare on character values
+  summarize(Value = last(Value), .groups = "drop") %>%
+  mutate(
+    Metric_Label = recode(Metric,
+                          Proxy_VL_Coverage = "Coverage",
+                          Proxy_Linkage = "Linkage",
+                          Viral_Suppression = "Suppression"
+    ),
+    Text = paste(Metric_Label, "(", sex, "): ", round(Value, 1), sep = "")
+  )
+
+# Combine text for display
+text_box_content_suppression <- paste(most_recent_suppression$Text, collapse = "\n")
+
+
+# Define USAID colors
+usaid_colors <- c("Female" = "#5BB5D5", "Male" = "#F36428")
+
+
+# Create the faceted plot with a text box
+p = ggplot(trend_data %>% filter(age_group == 'adolescent'), aes(x = Time, y = Value, color = sex, group = sex)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~Metric, ncol = 1, scales = "free_y", labeller = as_labeller(c(
+    Proxy_VL_Coverage = "Coverage",
+    Proxy_Linkage = "Linkage",
+    Viral_Suppression = "Suppression"
+  ))) +
+  scale_color_manual(values = usaid_colors) +
+  labs(
+    title = "Trends Across Time by Age Group",
+    x = "",
+    y = "Value",
+    color = "Age Group", 
+    caption = "Metrics Calculation:\n- Proxy Linkage: TX_NEW / HTS_TST_POS\n- Proxy Coverage: TX_PVLS_Denominator / TX_CURR [2 Q Prior]\n- Proxy Suppression: TX_PVLS_Numerator / TX_Denominator"
+
+  ) +
+  theme_classic(base_size = 10) +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  ) 
+
+
+# Create annotation data frames for each metric
+annotation_linkage <- data.frame(
+  Metric = "Proxy_Linkage",
+  x = 15, # Use the last time point for placement
+  y = 100, # Adjust based on the y-axis scale of Linkage
+  label = text_box_content_linkage
+)
+
+annotation_coverage <- data.frame(
+  Metric = "Proxy_VL_Coverage",
+  x = 15, 
+  y = 100, # Adjust based on the y-axis scale of Coverage
+  label = text_box_content_coverage
+)
+
+annotation_suppression <- data.frame(
+  Metric = "Viral_Suppression",
+  x = 15, 
+  y = 100, # Adjust based on the y-axis scale of Suppression
+  label = text_box_content_suppression
+)
+
+# Add annotations for each metric
+p +
+  geom_text(
+    data = annotation_linkage,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE, # Prevent inheriting aesthetics from the main plot
+    hjust = 1, vjust = 1, size = 3
+  ) +
+  geom_text(
+    data = annotation_coverage,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = 1, vjust = 1, size = 3
+  ) +
+  geom_text(
+    data = annotation_suppression,
+    aes(x = x, y = y, label = label),
+    inherit.aes = FALSE,
+    hjust = 1, vjust = 1, size = 3
+  )
+
+
+
+```
+
+<br> 
+
+```{r country comparison bar plot, fig.height=6, fig.width=10}
+
+### Highlighted bar plot for each metric by country  
+
+# Filter the most recent fiscal year and quarter
+most_recent_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(
+    fiscal_year == max(fiscal_year), 
+    quarter == max(quarter[fiscal_year == max(fiscal_year)])
+  )
+
+most_recent_data <- most_recent_data %>%
+  mutate(
+    Proxy_Linkage = round(Proxy_Linkage, 1),
+    Viral_Suppression = round(Viral_Suppression, 1),
+    Proxy_Positivity = round(Proxy_Positivity, 1), 
+    Viral_coverage = round(Proxy_VL_Coverage, 1)
+  )
+
+data = most_recent_data
+
+age_groups_selected = 'adolescent'
+
+indicator_selected = 'Viral_coverage'
+
+create_highlighted_barplot <- function(
+  data, 
+  indicator_selected, 
+  age_groups_selected, 
+  y_label, 
+  title,
+  sex_selected = c("Both male and female", "Female", "Male"), 
+  caption_selected
+) {
+  # 1. Capture the user's indicator input as a symbol for tidy evaluation
+  indicator_sym <- rlang::ensym(indicator_selected)
+  
+  # 2. Prepare data for plotting
+  plot_data <- data %>%
+    # a) Filter by selected age groups and sexes
+    filter(age_group %in% age_groups_selected) %>%
+    filter(sex %in% sex_selected) %>%
+    # b) Select relevant columns, renaming the user-chosen indicator to "indicator"
+    select(
+      country, 
+      sex, 
+      age_group,
+      indicator = !!indicator_sym,  # Use the captured symbol as a column name
+      fiscal_year, 
+      quarter, 
+      TX_CURR_N
+    ) %>%
+    # c) Filter out rows where "indicator" is NA or TX_CURR_N <= 100
+    filter(!is.na(indicator), TX_CURR_N > 50)
+  
+  # 3. Flag "ALL" country for highlighting
+  plot_data <- plot_data %>%
+    mutate(highlight = ifelse(country == "ALL", "Selected", "Other"))
+  
+  # 4. Create a custom order for countries based on the first age group selected
+  country_order <- plot_data %>%
+  filter(age_group == age_groups_selected[1]) %>%
+  arrange(desc(indicator)) %>%
+  distinct(country) %>%    # Keep just the first occurrence
+  pull(country)
+
+# 2) Factor the 'country' based on this unique ordering
+  plot_data <- plot_data %>%
+  mutate(
+    country = factor(country, levels = country_order)
+  )
+  
+  # 6. Construct a subtitle from fiscal_year and quarter
+  fiscal_year <- unique(plot_data$fiscal_year)
+  quarter <- unique(plot_data$quarter)
+  subtitle <- paste("Fiscal Year:", fiscal_year, "| Quarter:", quarter)
+  
+  # 7. Define colors for age groups
+  sex_group_colors <- c(
+    "Male" = "#15478A",
+    "Both male and female" = "#5BB5D5",
+    "Female" = "#F36428"
+  )
+  
+  # 8. Plot
+  ggplot(plot_data, aes(x = country, y = indicator, fill = sex)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+    facet_wrap(~age_group) +
+    scale_y_continuous(labels = scales::comma_format()) +
+    scale_fill_manual(values = sex_group_colors) +
+    
+    # Add geom_text only for the "ALL" (highlight == "Selected") rows
+    geom_text(
+    data = subset(plot_data, highlight == "Selected"),
+    aes(label = round(indicator, 1), group = sex),  # <-- match group to fill = sex
+    vjust = -0.5,
+    size = 3,
+    position = position_dodge(width = 0.8),
+    color = "black"
+    ) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = "",
+      y = y_label,
+      fill = "Sex",
+      caption = caption_selected
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "right"
+    )
+}
+
+
+
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator_selected = "Proxy_Positivity",  
+  age_groups_selected = c("adolescent"),
+  sex_selected = c("Male", "Female"),
+  y_label = "Proxy_Positivity",
+  title = "Adolescent HIV positivity, by gender",
+  caption = "Proxy Positivity: HTS_TST_POS / HTS_TST"
+)
+
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator_selected = "Proxy_Linkage",  
+  age_groups_selected = c("adolescent"),
+  sex_selected = c("Male", "Female"),
+  y_label = "Proxy_Linkage",
+  title = "Adolescent linkage, by gender",
+  caption = "Proxy Linkage: TX_NEW / HTS_TST_POS"
+)
+
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator_selected = "Viral_coverage",  
+  age_groups_selected = c("adolescent"),
+  sex_selected = c("Male", "Female"),
+  y_label = "Viral_coverage",
+  title = "Adolescent viral coverage, by gender",
+  caption = "Proxy VL Coverage: TX_PVLS_Denominator / TX_CURR [2 Q Prior]"
+)
+
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator_selected = "Viral_Suppression",  
+  age_groups_selected = c("adolescent"),
+  sex_selected = c("Male", "Female"),
+  y_label = "Viral_Suppression",
+  title = "Adolescent viral suppression, by gender",
+  caption = "Viral Suppression: TX_PVLS_Numerator / TX_Denominator"
+)
+
+create_highlighted_barplot(
+  data = most_recent_data,
+  indicator_selected = "Proxy_Continuity",  
+  age_groups_selected = c("adolescent"),
+  sex_selected = c("Male", "Female"),
+  y_label = "Proxy_Continuity",
+  title = "Adolescent continuity, by gender",
+  caption = "Proxy Continuity of Treatment: TX_CURR / (TX_CURR - TX_NET_NEW + TX_NEW)"
+)
+
+
+```
+
+
+<br> 
+
+
+
+```{r TX_curr across time, fig.height=6, fig.width=10}
+
+
+
+### TX_CURR across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, sex, fiscal_year, quarter, time_period, time_numeric, TX_CURR_N) %>%
+  filter(!is.na(TX_CURR_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for age groups (OHA Recommended Palette)
+sex_group_colors <- c(
+    "Male" = "#15478A",
+    "Both male and female" = "#5BB5D5",
+    "Female" = "#F36428"
+  )
+
+# Create the trend plot with facets and free y-axis
+ggplot(plot_data %>% 
+         filter(sex %in% c('Male', 'Female'), 
+                age_group == 'adolescent'), aes(x = time_numeric, y = TX_CURR_N, color = sex, group = sex)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_color_manual(
+    values = sex_group_colors,
+    name = "Sex Group"
+  ) +
+  labs(
+    title = "Trends in TX_CURR Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "TX_CURR",
+    caption = "Source: DATIM OUxIM file\nThe dip in 2023Q4 is due to Nigeria data omitted from that quarter due to data quality issues."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  ) 
+
+
+
+```
+
+<br> 
+
+
+```{r TX_NEW across time, fig.height=6, fig.width=10}
+
+
+
+### TX_NEW across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, sex, fiscal_year, quarter, time_period, time_numeric, TX_NEW_N) %>%
+  filter(!is.na(TX_NEW_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for sex groups (OHA Recommended Palette)
+sex_group_colors <- c(
+    "Male" = "#15478A",
+    "Both male and female" = "#5BB5D5",
+    "Female" = "#F36428"
+  )
+
+# Create the trend plot with facets and free y-axis
+ggplot(plot_data %>% 
+         filter(sex %in% c('Male', 'Female'), 
+                age_group == 'adolescent'), aes(x = time_numeric, y = TX_NEW_N, color = sex, group = sex)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_color_manual(
+    values = sex_group_colors,
+    name = "Sex Group"
+  ) +
+  labs(
+    title = "Trends in TX_NEW Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "TX_NEW",
+    caption = "Source: DATIM OUxIM file\nThe dip in 2023Q4 is due to Nigeria data omitted from that quarter due to data quality issues."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  ) 
+
+
+
+
+```
+
+
+
+
+```{r HTS_TST and _POS across time, fig.height=6, fig.width=10}
+
+### HTS_TST across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, sex, fiscal_year, quarter, time_period, time_numeric, HTS_TST_N) %>%
+  filter(!is.na(HTS_TST_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for age groups (OHA Recommended Palette)
+sex_group_colors <- c(
+    "Male" = "#15478A",
+    "Both male and female" = "#5BB5D5",
+    "Female" = "#F36428"
+  )
+
+# Create the trend plot with facets and free y-axis
+ggplot(plot_data %>% 
+         filter(sex %in% c('Male', 'Female')),
+       aes(x = time_numeric, y = HTS_TST_N, color = sex, group = sex)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) + 
+  scale_y_continuous(
+    labels = comma_format()
+  ) +  
+  scale_color_manual(
+    values = sex_group_colors,
+    name = "Sex"
+  ) +
+  labs(
+    title = "Trends in HTS_TST Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "HTS_TST",
+    caption = "Source: DATIM OUxIM file\nThe dip in 2023Q4 is due to Nigeria data omitted from that quarter due to data quality issues."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  facet_wrap(~ age_group, ncol = 1, scales = "free_y")
+
+
+
+
+### HTS_TST_POS across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, sex, fiscal_year, quarter, time_period, time_numeric, HTS_TST_POS_N) %>%
+  filter(!is.na(HTS_TST_POS_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for age groups (OHA Recommended Palette)
+sex_group_colors <- c(
+    "Male" = "#15478A",
+    "Both male and female" = "#5BB5D5",
+    "Female" = "#F36428"
+  )
+
+# Create the trend plot with facets and free y-axis
+ggplot(plot_data %>%
+         filter(sex %in% c('Male', 'Female')), 
+       aes(x = time_numeric, y = HTS_TST_POS_N, color = sex, group = sex)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(
+    labels = comma_format()
+  ) + 
+  scale_color_manual(
+    values = sex_group_colors,
+    name = "Sex"
+  ) +
+  labs(
+    title = "Trends in HTS_TST_POS Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "HTS_TST_POS_N",
+    caption = "Source: DATIM OUxIM file\nThe dip in 2023Q4 is due to Nigeria data omitted from that quarter due to data quality issues."
+) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  facet_wrap(~ age_group, ncol = 1, scales = "free_y")
+
+
+
+
+```
+
+
+```{r PREP across time, fig.height=6, fig.width=10}
+
+### PrEP_CT_N across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(
+    country == "ALL",
+    age_group %in% c("adolescent", "adult")  # Only adolescent & adult
+  ) %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, sex, fiscal_year, quarter, time_period, time_numeric, PrEP_CT_N) %>%
+  filter(!is.na(PrEP_CT_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for sex (OHA Recommended Palette)
+sex_group_colors <- c(
+  "Male"               = "#15478A",
+  "Both male and female" = "#5BB5D5",
+  "Female"             = "#F36428"
+)
+
+# Create the trend plot with facets and free y-axis
+ggplot(
+  data = plot_data %>% filter(sex %in% c("Male", "Female")),
+  aes(x = time_numeric, y = PrEP_CT_N, color = sex, group = sex)
+) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(labels = comma_format()) +
+  scale_color_manual(values = sex_group_colors, name = "Sex") +
+  labs(
+    title = "Trends in PrEP_CT_N Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "PrEP_CT_N",
+    caption = "Source: DATIM OUxIM file\n"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x     = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y     = element_text(size = 10),
+    axis.title      = element_text(size = 12, face = "bold"),
+    plot.title      = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle   = element_text(size = 12, hjust = 0.5),
+    legend.title    = element_text(size = 12),
+    legend.text     = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  facet_wrap(~ age_group, ncol = 1, scales = "free_y")
+
+
+### PrEP_NEW_N across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df_gender %>%
+  filter(
+    country == "ALL",
+    age_group %in% c("adolescent", "adult")  # Only adolescent & adult
+  ) %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, sex, fiscal_year, quarter, time_period, time_numeric, PrEP_NEW_N) %>%
+  filter(!is.na(PrEP_NEW_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Use the same color palette for consistency
+# Create the trend plot with facets and free y-axis
+ggplot(
+  data = plot_data %>% filter(sex %in% c("Male", "Female")),
+  aes(x = time_numeric, y = PrEP_NEW_N, color = sex, group = sex)
+) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(labels = comma_format()) +
+  scale_color_manual(values = sex_group_colors, name = "Sex") +
+  labs(
+    title = "Trends in PrEP_NEW_N Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "PrEP_NEW_N",
+    caption = "Source: DATIM OUxIM file\n"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x     = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y     = element_text(size = 10),
+    axis.title      = element_text(size = 12, face = "bold"),
+    plot.title      = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle   = element_text(size = 12, hjust = 0.5),
+    legend.title    = element_text(size = 12),
+    legend.text     = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  facet_wrap(~ age_group, ncol = 1, scales = "free_y")
+
+
+```
+
+
+
+
+<br> 
+--------------------------------------------------
+## Country tables 
+### Minimum TX_CURR > 100 males and 100 females
+
+```{r tables}
+
+# Define a common style for titles
+title_style <- "color: #2c3e50; font-size:16px; font-weight:bold;"
+
+# 1. Top 5 Peds Countries by Viral Suppression
+top5_vs <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 200) %>% 
+  filter(age_group == "adolescent", 
+         sex == 'Both male and female') %>%
+  group_by(country, fiscal_year, quarter) %>%
+  summarize(VS = mean(Viral_Suppression, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  distinct(country, .keep_all = TRUE) %>%
+  arrange(desc(VS)) %>%
+  head(5)
+
+top5_vs %>%
+  mutate(across(where(is.numeric), ~ round(.x, 1))) %>% # Round numeric columns to 1 decimal point
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'> Countries with Highest Adolescent Viral Suppression</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Values represent the latest quarterly average Viral Suppression rates.", 
+               notation = "none")
+
+# 2. Adolescent Improvement in Viral Suppression (Slope)
+adolescent_vs_slope <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 200) %>% 
+  filter(age_group == "adolescent", 
+         sex == 'Both male and female', 
+         fiscal_year >= (max(fiscal_year) - 2), 
+         TX_CURR_N > 50) %>%
+  mutate(time_num = fiscal_year + as.numeric(quarter)/4) %>%
+  group_by(country) %>%
+  summarize(slope = coef(lm(Viral_Suppression ~ time_num))[2], .groups = "drop") %>%
+  arrange(desc(slope))
+
+adolescent_vs_slope %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Adolescent Change in Viral Suppression Over Past 3 Years (Slope)</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Slopes calculated using linear regression over the last 3 fiscal years.", 
+               notation = "none")
+
+
+
+
+# 1. Top 10 Largest Sex Difference in Adolescent Viral Suppression
+largest_gap_adol_supp <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 100) %>% 
+  filter(age_group == "adolescent", sex %in% c("Male", "Female")) %>%
+  group_by(country, sex) %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(country, sex, Viral_Suppression) %>%
+  pivot_wider(names_from = sex, values_from = Viral_Suppression) %>%
+  mutate(gap = abs(Male - Female)) %>%
+  arrange(desc(gap)) %>%
+  head(10)
+
+largest_gap_adol_supp %>%
+  mutate(across(where(is.numeric), ~ round(.x, 1))) %>% # Round numeric columns to 1 decimal point
+  kable(
+    format = "html", 
+    caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Gap in Adolescent Viral Suppression Gap by Sex</span>"
+  ) %>%
+  kable_styling(
+    full_width = FALSE, 
+    bootstrap_options = c("striped", "hover"),
+    position = "left", 
+    font_size = 14
+  ) %>%
+  add_footnote(
+    "*Gap represents the absolute difference (Male - Female) in Adolescent Viral Suppression rates.",
+    notation = "none"
+  )
+
+# 2. Top 10 Largest Sex Difference in Adolescent Coverage (Proxy_VL_Coverage)
+largest_gap_adol_cov <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 100) %>% 
+  filter(age_group == "adolescent", sex %in% c("Male", "Female")) %>%
+  group_by(country, sex) %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(country, sex, Proxy_VL_Coverage) %>%
+  pivot_wider(names_from = sex, values_from = Proxy_VL_Coverage) %>%
+  mutate(gap = abs(Male - Female)) %>%
+  arrange(desc(gap)) %>%
+  head(10)
+
+largest_gap_adol_cov %>%
+  mutate(across(where(is.numeric), ~ round(.x, 1))) %>% # Round numeric columns to 1 decimal point
+  kable(
+    format = "html", 
+    caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Gap in Adolescent Coverage  by Sex</span>"
+  ) %>%
+  kable_styling(
+    full_width = FALSE, 
+    bootstrap_options = c("striped", "hover"),
+    position = "left", 
+    font_size = 14
+  ) %>%
+  add_footnote(
+    "*Gap represents the absolute difference (Male - Female) in Adolescent Coverage rates.",
+    notation = "none"
+  )
+
+# 3. Top 10 Largest Sex Difference in Adolescent Linkage (Proxy_Linkage)
+largest_gap_adol_link <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 100) %>% 
+  filter(age_group == "adolescent", sex %in% c("Male", "Female")) %>%
+  group_by(country, sex) %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(country, sex, Proxy_Linkage) %>%
+  pivot_wider(names_from = sex, values_from = Proxy_Linkage) %>%
+  mutate(gap = abs(Male - Female)) %>%
+  arrange(desc(gap)) %>%
+  head(10)
+
+largest_gap_adol_link %>%
+  mutate(across(where(is.numeric), ~ round(.x, 1))) %>% # Round numeric columns to 1 decimal point
+  kable(
+    format = "html", 
+    caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Gap in Adolescent Linkage by Sex</span>"
+  ) %>%
+  kable_styling(
+    full_width = FALSE, 
+    bootstrap_options = c("striped", "hover"),
+    position = "left", 
+    font_size = 14
+  ) %>%
+  add_footnote(
+    "*Gap represents the absolute difference (Male - Female) in Adolescent Linkage rates.",
+    notation = "none"
+  )
+
+# 4. Top 10 Largest Sex Difference in Adolescent Continuity (Proxy_Continuity)
+largest_gap_adol_cont <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 100) %>% 
+  filter(age_group == "adolescent", sex %in% c("Male", "Female")) %>%
+  group_by(country, sex) %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(country, sex, Proxy_Continuity) %>%
+  pivot_wider(names_from = sex, values_from = Proxy_Continuity) %>%
+  mutate(gap = abs(Male - Female)) %>%
+  arrange(desc(gap)) %>%
+  head(10)
+
+largest_gap_adol_cont %>%
+  mutate(across(where(is.numeric), ~ round(.x, 1))) %>% # Round numeric columns to 1 decimal point
+  kable(
+    format = "html", 
+    caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Gap in Adolescent Continuity by Sex</span>"
+  ) %>%
+  kable_styling(
+    full_width = FALSE, 
+    bootstrap_options = c("striped", "hover"),
+    position = "left", 
+    font_size = 14
+  ) %>%
+  add_footnote(
+    "*Gap represents the absolute difference (Male - Female) in Adolescent Continuity rates.",
+    notation = "none"
+  )
+
+# 5. Smallest Adolescent vs Adult Gap in Viral Suppression
+least_bad_adol <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 200) %>% 
+  filter(age_group %in% c("adolescent", "adult"), 
+         sex == 'Both male and female') %>%
+  group_by(country, age_group) %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(country, age_group, Viral_Suppression) %>%
+  pivot_wider(names_from = age_group, values_from = Viral_Suppression) %>%
+  mutate(gap = abs(adolescent - adult)) %>%
+  arrange(gap) %>%
+  head(5)
+
+least_bad_adol %>%
+  mutate(across(where(is.numeric), ~ round(.x, 1))) %>% # Round numeric columns to 1 decimal point
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Countries with Smallest Adolescent vs Adult Gap in Viral Suppression</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Gap represents the absolute difference between Adolescent and Adult Viral Suppression rates.", 
+               notation = "none")
+
+
+# 6. Top 5 Adolescent Countries by Improvement in Case Finding Over 3 Years 
+top5_case_finding <- OU_adult_peds_adol_all_df_gender %>%
+  filter(TX_CURR_N > 200) %>% 
+  filter(age_group == "adolescent",
+         sex == 'Both male and female', 
+         fiscal_year >= (max(fiscal_year) - 2), 
+         TX_CURR_N > 50) %>%
+  mutate(time_num = fiscal_year + as.numeric(quarter)/4,
+         ratio = HTS_TST_POS_N / TX_CURR_N) %>%
+  group_by(country) %>%
+  summarize(slope = coef(lm(ratio ~ time_num))[2], .groups = "drop") %>%
+  arrange(desc(slope))
+
+top5_case_finding %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Countries with Most Increases in Adolescent Case Finding (HTS_TST_POS/TX_CURR Ratio)</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Slopes calculated using linear regression over the last 3 fiscal years, with TX_CURR as normalizing parameter.", 
+               notation = "none")
+
+
+
+# 6. Top 5 Adolescent Countries by Improvement in PrEP_NEW Over 3 Years
+
+top5_prep_new <- OU_adult_peds_adol_all_df_gender %>%
+  filter(
+    age_group == "adolescent",
+    sex == "Both male and female",
+    fiscal_year >= (max(fiscal_year) - 2),  # Last 3 fiscal years
+    TX_CURR_N > 100
+  ) %>%
+  mutate(
+    # Create a numeric time variable (e.g., 2023.25 for Q1, 2023.50 for Q2, etc.)
+    time_num = fiscal_year + as.numeric(quarter) / 4,
+    # Compute ratio of PrEP_NEW to TX_CURR
+    ratio = PrEP_NEW_N / TX_CURR_N
+  ) %>%
+  group_by(country) %>%
+  # Use linear regression to get the slope of 'ratio' over time
+  summarize(
+    slope = coef(lm(ratio ~ time_num))[2], 
+    .groups = "drop"
+  ) %>%
+  arrange(desc(slope))
+
+top5_prep_new %>%
+  kable(
+    "html", 
+    caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Countries with Most Increases in Adolescent PrEP_NEW (PrEP_NEW / TX_CURR Ratio)</span>"
+  ) %>%
+  kable_styling(
+    full_width = FALSE, 
+    bootstrap_options = c("striped", "hover"), 
+    position = "left", 
+    font_size = 14
+  ) %>%
+  add_footnote(
+    "*Slopes calculated using linear regression over the last 3 fiscal years, with TX_CURR as normalizing parameter.",
+    notation = "none"
+  )
+
+
+
+```
+
+
+
+
+
