@@ -1,0 +1,1454 @@
+---
+title: "`r paste('PVT Country-Specific Report:', params$country_selected, '- FY', params$fiscal_year_selected, 'Quarter', params$quarter_selected)`"
+output: html_document
+params:
+  country_selected: "Democratic Republic of the Congo"
+  fiscal_year_selected: 2024
+  quarter_selected: 4
+---
+
+
+### All charts and tables use USAID-specific data. 
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+###################### INTRODUCTION ---------------------------------------------------
+
+# Steps for creating the automated PVT country-specific report:
+    #1. Download the SITE xIM country file combined 
+    #2. Run PVT dataframe for each country.R file to create the summary dataframes 
+      #2b. Run the same code to combine the multiple individual country dataframes into one combined dataframes 
+    #4. Run the RMarkdown file to generate the report   ***** this code represents this step *****
+             #a. Note, there is a separate R file that runs all the reports at once. 
+
+library(tidyverse)
+library(ggplot2)
+library(kableExtra)
+library(knitr)
+library(scales)
+library(plotly)
+
+
+
+#### initialize -------------------------------
+
+
+load(file = 'C:/Users/georg/Desktop/databases/output/PVT/PVT_OU_df.rda')
+load(file = 'C:/Users/georg/Desktop/databases/output/PVT/combined_PVT_SITExIM.rda')
+load(file = 'C:/Users/georg/Desktop/databases/output/PVT/combined_PVT_SITExIM_pp.rda')
+load(file = 'C:/Users/georg/Desktop/databases/output/PVT/combined_PVT_SITExIM_snu1.rda')
+
+
+country_selected = 'Democratic Republic of the Congo'
+quarter_selected = 4 
+fiscal_year_selected = 2024
+
+
+
+# Assign parameters to variables
+country_selected <- params$country_selected
+fiscal_year_selected <- params$fiscal_year_selected
+quarter_selected <- params$quarter_selected
+
+
+# Replace Inf, -Inf, and NaN with NA across all columns in the dataframes
+PVT_OU_df[] <- lapply(PVT_OU_df, function(col) {
+  if (is.numeric(col)) {
+    col[is.infinite(col) | is.nan(col)] <- NA
+  }
+  return(col)
+})
+
+combined_PVT_SITExIM[] <- lapply(combined_PVT_SITExIM, function(col) {
+  if (is.numeric(col)) {
+    col[is.infinite(col) | is.nan(col)] <- NA
+  }
+  return(col)
+})
+
+combined_PVT_SITExIM_pp[] <- lapply(combined_PVT_SITExIM_pp, function(col) {
+  if (is.numeric(col)) {
+    col[is.infinite(col) | is.nan(col)] <- NA
+  }
+  return(col)
+})
+
+combined_PVT_SITExIM_snu1[] <- lapply(combined_PVT_SITExIM_snu1, function(col) {
+  if (is.numeric(col)) {
+    col[is.infinite(col) | is.nan(col)] <- NA
+  }
+  return(col)
+})
+
+
+
+# Update the country name and filter
+if (country_selected == 'Democratic Republic of the Congo') {
+  PVT_OU_df <- PVT_OU_df %>%
+    mutate(country = ifelse(country == 'DRC', 'Democratic Republic of the Congo', country))
+  
+  df_country = PVT_OU_df %>% 
+    filter(country == country_selected)
+  
+} else {
+  df_country <- PVT_OU_df %>%
+    filter(country == country_selected)
+}
+
+
+
+# Filter for the most recent quarter (2024 Q4)
+
+latest_points <- df_country %>%
+  filter(fiscal_year == fiscal_year_selected, 
+         quarter == quarter_selected)
+
+
+df_country_snu1 <- combined_PVT_SITExIM_snu1 %>%
+  filter(country == country_selected)
+
+
+df_country_pp <- combined_PVT_SITExIM_pp %>%
+  filter(country == country_selected)
+
+
+
+# Get the current date and time
+creation_time <- Sys.time()
+formatted_time <- format(creation_time, "%Y-%m-%d %H:%M:%S")
+
+```
+
+`r formatted_time`
+
+<br> 
+
+```{r functions}
+
+####  barchart function  ----------------------------------------------------
+
+
+create_highlighted_barplot <- function(
+  data, 
+  indicator_selected, 
+  y_label, 
+  title,
+  caption_selected,
+  y_min = NA,
+  y_max = NA  # Default to NA; only use if user specifies
+) {
+  # 1. Capture the user's indicator input as a symbol for tidy evaluation
+  indicator_sym <- rlang::ensym(indicator_selected)
+  
+  # 2. Prepare data for plotting
+  plot_data <- data %>%
+    # a) Select relevant columns, renaming the user-chosen indicator to "indicator"
+    select(
+      country, 
+      indicator = !!indicator_sym,  # Use the captured symbol as a column name
+      fiscal_year, 
+      quarter
+    ) %>%
+    # b) Filter out rows where "indicator" is NA
+    filter(!is.na(indicator))
+  
+  # 3. Flag "ALL" country for highlighting
+  plot_data <- plot_data %>%
+    mutate(highlight = ifelse(country == country_selected, "Selected", "Other"))
+  
+  # 4. Create a custom order for countries based on indicator values
+  country_order <- plot_data %>%
+    arrange(desc(indicator)) %>%
+    distinct(country) %>%    # Keep just the first occurrence
+    pull(country)
+  
+  # 5. Factor the 'country' based on this unique ordering
+  plot_data <- plot_data %>%
+    mutate(
+      country = factor(country, levels = country_order)
+    )
+  
+  # 6. Construct a subtitle from fiscal_year and quarter
+  fiscal_year <- unique(plot_data$fiscal_year)
+  quarter <- unique(plot_data$quarter)
+  subtitle <- paste("Fiscal Year:", fiscal_year, "| Quarter:", quarter)
+  
+  # 7. Build the base plot
+  p <- ggplot(plot_data, aes(x = country, y = indicator, fill = highlight)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+    # We DON'T set limits here, so no data is removed
+    scale_y_continuous(labels = scales::comma_format()) +
+    scale_fill_manual(values = c("Selected" = "#F36428", "Other" = "#8C8C91")) +
+    
+    # Add geom_text only for the "ALL" (highlight == "Selected") rows
+    geom_text(
+      data = subset(plot_data, highlight == "Selected"),
+      aes(label = round(indicator, 1)),
+      vjust = -0.5,
+      size = 3,
+      color = "black"
+    ) +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = "",
+      y = y_label,
+      fill = "Highlight",
+      caption = caption_selected
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "right"
+    )
+  
+  # 8. Conditionally add coord_cartesian() only if y_min and y_max are provided
+  if (!is.na(y_min) && !is.na(y_max)) {
+    p <- p + coord_cartesian(ylim = c(y_min, y_max))
+  }
+  
+  return(p)
+}
+
+
+
+
+
+```
+
+
+
+
+```{r summary stats listed}
+
+### Summary stats --------------------------------------------------
+
+# Filter and summarize the data for country == 'ALL', FY2024, Q4   
+# note, the PVT_OU_df dataframe is USAID specific 
+
+table_all_fy2024_q4 <- PVT_OU_df %>%
+  filter(country == country_selected, 
+         fiscal_year == fiscal_year_selected, 
+         quarter == quarter_selected) 
+
+
+
+# Assign each metric to individual variables
+total_HIVpos_infants = table_all_fy2024_q4$PMTCT_HEI_POS_N
+total_HIVpos_ANC_clients <- table_all_fy2024_q4$PMTCT_STAT_POS_N
+total_HIVpos_ANC_clients_on_ART <- table_all_fy2024_q4$PMTCT_ART_N
+total_PMTCT_ART_coverage_total <- table_all_fy2024_q4$PMTCT_ART_coverage_total
+total_viral_suppression <- table_all_fy2024_q4$viral_suppression
+total_ED_coverage_2mo <- table_all_fy2024_q4$EID_coverage_2mo
+total_EID_coverage <- table_all_fy2024_q4$EID_coverage
+total_HEI_pos_2mo <- table_all_fy2024_q4$HEI_pos_2mo
+total_HEI_pos_12mo <- table_all_fy2024_q4$HEI_pos_12mo
+total_HEI_pos_linkage_ART_proxy <- table_all_fy2024_q4$HEI_pos_linkage_ART_proxy
+
+
+```
+
+<br> 
+
+
+## Key metrics for **`r params$country_selected`**, FY **`r params$fiscal_year_selected`**, and Quarter **`r params$quarter_selected`**:
+
+- **HIV-Positive Infants:** `r format(total_HIVpos_infants, big.mark = ",", scientific = FALSE)`
+
+- **HIV-Positive ANC Clients:** `r format(total_HIVpos_ANC_clients, big.mark = ",", scientific = FALSE)`
+- **HIV-Positive ANC Clients on ART:** `r format(total_HIVpos_ANC_clients_on_ART, big.mark = ",", scientific = FALSE)`
+- **PMTCT ART Coverage (Total):** `r format(total_PMTCT_ART_coverage_total, big.mark = ",", scientific = FALSE)`
+- **Viral Suppression (PMTCT):** `r format(total_viral_suppression, big.mark = ",", scientific = FALSE)`%
+- **EID Coverage (≤2 Months):** `r format(total_ED_coverage_2mo, big.mark = ",", scientific = FALSE)`%
+- **Overall EID Coverage (12 months):** `r format(total_EID_coverage, big.mark = ",", scientific = FALSE)`%
+- **HEI Positivity ≤2 Months:** `r format(total_HEI_pos_2mo, big.mark = ",", scientific = FALSE)`%
+- **HEI Positivity ≤12 Months:** `r format(total_HEI_pos_12mo, big.mark = ",", scientific = FALSE)`%
+- **HEI Positivity Linkage to ART (Proxy):** `r format(total_HEI_pos_linkage_ART_proxy, big.mark = ",", scientific = FALSE)`%
+
+<br>
+
+
+
+## HIV-exposed and HIV-positive infants 
+
+
+<br>
+
+```{r PMTCT_HEI_POS for infants trend graph, fig.height=5, fig.width=10}
+
+#### HIV + infants ----------------------------
+
+  # Filter for the most recent quarter (2024 Q4)
+latest_points <- df_country %>%
+  filter(fiscal_year == fiscal_year_selected, 
+         quarter == quarter_selected)
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    PMTCT_HEI_POS_N = format(round(PMTCT_HEI_POS_N, 0), big.mark = ","),
+    PMTCT_HEI_POS_2MO_N = format(round(PMTCT_HEI_POS_2MO_N, 0), big.mark = ","),
+    PMTCT_HEI_POS_Two_Twelve_Months_N = format(round(PMTCT_HEI_POS_Two_Twelve_Months_N, 0), big.mark = ",")
+  )
+
+caption_text <- paste0("HIV-Positive Infant Metrics:
+  HIV-Positive Infants (Total): PMTCT_HEI_POS_N
+  HIV-Positive Infants (<2 Months): PMTCT_HEI_POS_2MO_N
+  HIV-Positive Infants (2-12 Months): PMTCT_HEI_POS_Two_Twelve_Months_N \n \n", 
+  "Most recent values (2024 Q4)\n",
+  "HIV-Positive Infants (Total): ", latest_values$PMTCT_HEI_POS_N, "\n",
+  "HIV-Positive Infants (<2 Months): ", latest_values$PMTCT_HEI_POS_2MO_N, "\n",
+  "HIV-Positive Infants (2-12 Months): ", latest_values$PMTCT_HEI_POS_Two_Twelve_Months_N
+)
+
+max_y_value = max(df_country$PMTCT_HEI_POS_N, na.rm = TRUE)
+
+# Create the plot
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = PMTCT_HEI_POS_N, color = "HIV-Positive Infants (Total)", group = 1), linewidth = 1) +
+  geom_point(aes(y = PMTCT_HEI_POS_N, color = "HIV-Positive Infants (Total)"), size = 2) +
+  geom_line(aes(y = PMTCT_HEI_POS_2MO_N, color = "HIV-Positive Infants (<2 Months)", group = 2), linewidth = 1) +
+  geom_point(aes(y = PMTCT_HEI_POS_2MO_N, color = "HIV-Positive Infants (<2 Months)"), size = 2) +
+  geom_line(aes(y = PMTCT_HEI_POS_Two_Twelve_Months_N, color = "HIV-Positive Infants (2-12 Months)", group = 3), linewidth = 1) +
+  geom_point(aes(y = PMTCT_HEI_POS_Two_Twelve_Months_N, color = "HIV-Positive Infants (2-12 Months)"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "HIV-Positive Infants (Total)" = "#2057A7",                # OHA Denim
+      "HIV-Positive Infants (<2 Months)" = "#F2BC40",           # Golden Sand
+      "HIV-Positive Infants (2-12 Months)" = "#287C6F"          # Genoa
+    )
+  ) +
+  scale_y_continuous(labels = scales::comma_format(), 
+                     limits = c(0, max_y_value + 3)) +
+  labs(
+    title = paste0(country_selected, " - Trend of Number of HIV-Positive Infants"),
+    subtitle = "across USAID-supported sites, and by age at test collection",
+    x = "  ",
+    y = "Number of Infants",
+    color = "Metrics",
+    caption = caption_text
+  ) + 
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 8)
+  )
+
+
+
+
+```
+
+
+<br>
+
+```{r HEI_POS_ART trend graph, fig.height=5, fig.width=10}
+
+#### HEI_POS_ART trend graph -------------------------------------------------
+
+
+
+# Filter for country == country_selected 
+
+# Filter for the most recent quarter (2024 Q4)
+latest_points <- df_country %>%
+  filter(fiscal_year == 2024 & quarter == "4")
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    PMTCT_HEI_POS_N = format(round(PMTCT_HEI_POS_N, 0), big.mark = ","),
+    PMTCT_HEI_POS_ART_N = format(round(PMTCT_HEI_POS_ART_N, 0), big.mark = ",")
+  )
+
+caption_text <- paste0(
+  "HIV-Positive Infant Metrics:
+  HIV-Positive Infants (Total): PMTCT_HEI_POS_N
+  HIV-Positive Infants on ART: PMTCT_HEI_POS_ART_N \n \n", 
+  "Most recent values (2024 Q4)\n",
+  "HIV-Positive Infants (Total): ", latest_values$PMTCT_HEI_POS_N, "\n",
+  "HIV-Positive Infants on ART: ", latest_values$PMTCT_HEI_POS_ART_N
+)
+
+# Create the plot
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = PMTCT_HEI_POS_N, color = "HIV-Positive Infants (Total)", group = 1), linewidth = 1) +
+  geom_point(aes(y = PMTCT_HEI_POS_N, color = "HIV-Positive Infants (Total)"), size = 2) +
+  geom_line(aes(y = PMTCT_HEI_POS_ART_N, color = "HIV-Positive Infants on ART", group = 2), linewidth = 1) +
+  geom_point(aes(y = PMTCT_HEI_POS_ART_N, color = "HIV-Positive Infants on ART"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "HIV-Positive Infants (Total)" = "#2057A7",  # OHA Denim
+      "HIV-Positive Infants on ART" = "#F2BC40"   # Golden Sand
+    )
+  )  +
+  labs(
+    title = paste0(country_selected, " - Trend of HIV-Positive Infants and ART Coverage"),
+    subtitle = "across USAID supported sites", 
+    x = " ",
+    y = "Number of Infants",
+    color = "Metrics",
+    caption = caption_text
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 8)
+  )
+  
+  
+
+
+```
+
+<br> 
+
+
+
+```{r HEI positivity barplot, fig.height=5, fig.width=10}
+
+
+
+### HEI pos  ------------------------------------------------
+
+
+# 1. Filter relevant rows (FY2024, Q4) and pivot the two HEI variables
+plot_data <- PVT_OU_df %>%
+  filter(fiscal_year == fiscal_year_selected, quarter == quarter_selected) %>%
+  select(country, HEI_pos_12mo, HEI_pos_2mo) %>%
+  pivot_longer(
+    cols = c(HEI_pos_12mo, HEI_pos_2mo),
+    names_to = "indicator",
+    values_to = "value"
+  ) %>%
+  filter(!is.na(value))
+
+# 2. Create a country ordering by descending HEI_pos_12mo
+country_order <- PVT_OU_df %>%
+  filter(fiscal_year == fiscal_year_selected, quarter == quarter_selected) %>%
+  arrange(desc(HEI_pos_12mo)) %>%
+  distinct(country) %>%
+  pull(country)
+
+# 3. Factor `country` using that custom order
+#    And force "HEI_pos_2mo" to come before "HEI_pos_12mo"
+plot_data <- plot_data %>%
+  mutate(
+    country = factor(country, levels = country_order),
+    indicator = factor(indicator, levels = c("HEI_pos_2mo", "HEI_pos_12mo"))
+  ) %>%
+  mutate(
+    value = ifelse(value > 6, 6, value)
+  )
+
+
+ggplot(plot_data, aes(x = country, y = value, fill = interaction(indicator, country == country_selected))) +
+  geom_col(position = position_dodge(width = 0.8)) +
+  geom_text(
+    aes(label = ifelse(country == country_selected, value, "")),
+    position = position_dodge(width = 0.8),
+    vjust = -0.5,
+    size = 3,
+    color = "black"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "HEI_pos_2mo.TRUE" = "#F2BC40",  # Golden Sand for selected country
+      "HEI_pos_12mo.TRUE" = "#C43D4D", # Old Rose for selected country
+      "HEI_pos_2mo.FALSE" = "grey80",  # Grey for non-selected countries
+      "HEI_pos_12mo.FALSE" = "grey50"  # Darker grey for non-selected countries
+    ),
+    labels = c(
+      "HEI_pos_2mo.TRUE" = "HEI Pos 2 mo (Selected)",
+      "HEI_pos_12mo.TRUE" = "HEI Pos 12 mo (Selected)",
+      "HEI_pos_2mo.FALSE" = "HEI Pos 2 mo (Others)",
+      "HEI_pos_12mo.FALSE" = "HEI Pos 12 mo (Others)"
+    )
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = "0-2 and 2-12 month positivity for FY2024, Q4",
+    x = NULL,
+    y = "Percentage positive",
+    fill = "Indicator", 
+    caption = "Values greater than 6% truncated at 6% for viewing"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+
+
+
+```
+
+
+<br>
+
+
+```{r PMTCT_HEI_POS for infants by snu1 plotly, fig.height=6, fig.width=10}
+
+### HIV + infants by snu1 ----------------------------------
+
+
+# Filter for country == country selected, and include snu1 
+df_country_snu1 <- combined_PVT_SITExIM_snu1 %>%
+  filter(country == country_selected)
+
+
+# Create the plot
+p9 = ggplot(df_country_snu1 %>% filter(funding_agency == "USAID"), aes(x = paste(fiscal_year, "Q", quarter, sep = ""), y = PMTCT_HEI_POS_N, group = snu1, color = snu1)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = "Trend of Number of HIV-Positive Infants (PMTCT_HEI_POS_N, USAID only)",
+    subtitle = "Grouped by SNU1",
+    x = " ",
+    y = "Number of Infants",
+    color = "SNU1"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+
+# Convert ggplot to interactive plotly
+interactive_plot9 <- ggplotly(p9)
+
+# Show the interactive plot
+interactive_plot9
+
+
+
+```
+
+<br> 
+
+
+```{r HEI positivity trend graph, fig.height=5, fig.width=10}
+
+### HEI positivity -------------------------------------
+
+
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    HEI_pos_2mo = round(HEI_pos_2mo, 1),
+    HEI_pos_12mo = round(HEI_pos_12mo, 1)
+  )
+
+caption_text <- paste0(
+"HEI Positivity Variables Calculation:
+ HEI Positivity ≤2 Months: PMTCT_HEI_POS_2MO_N / PMTCT_HEI_N_2MO_N
+HEI Positivity ≤12 Months: PMTCT_HEI_POS_N / PMTCT_HEI_N \n \n", 
+  "Most recent values (2024 Q4)\n",
+  "HEI Positivity ≤2 Months: ", latest_values$HEI_pos_2mo, "%\n",
+  "HEI Positivity ≤12 Months: ", latest_values$HEI_pos_12mo, "%"
+)
+
+
+
+max_y_value_1 = max(df_country$HEI_pos_12mo, na.rm = T) 
+max_y_value_2 = max(df_country$HEI_pos_2mo, na.rm = T)
+max_y_value = max(max_y_value_1, max_y_value_2)
+
+
+# Create the plot
+ggplot(df_country %>% filter(fiscal_year > 2023), aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = HEI_pos_2mo, color = "HEI Positivity ≤2 Months", group = 1), linewidth = 1) +
+  geom_point(aes(y = HEI_pos_2mo, color = "HEI Positivity ≤2 Months"), size = 2) +
+  geom_line(aes(y = HEI_pos_12mo, color = "HEI Positivity ≤12 Months", group = 2), linewidth = 1) +
+  geom_point(aes(y = HEI_pos_12mo, color = "HEI Positivity ≤12 Months"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "HEI Positivity ≤2 Months" = "#2057A7", # OHA Denim
+      "HEI Positivity ≤12 Months" = "#F2BC40" # Golden Sand
+    )
+  ) +
+  labs(
+    title = "Trend of HEI Positivity",
+    x = " ",
+    y = "Percentage (%)",
+    color = "Metrics",
+    caption = caption_text
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 9)
+  )
+
+
+```
+
+<br>
+
+
+
+
+```{r EID coverage bar plot , fig.height=5, fig.width=10}
+
+
+create_highlighted_barplot(
+  data = PVT_OU_df %>%
+    filter(fiscal_year == fiscal_year_selected, quarter == quarter_selected),  
+  indicator_selected = "EID_coverage_2mo",      # Indicator column to plot
+  y_label = "EID Coverage ≤2 Months (%)",       # Y-axis label
+  title = paste("EID Coverage ≤2 Months by Country - USAID only"),
+  caption_selected = "EID Coverage ≤2 Months = (PMTCT_EID_Less_Equal_Two_Months_N / PMTCT_EID_D) * 100.
+PMTCT_EID_Less_Equal_Two_Months_N: Number of infants with early infant diagnosis ≤2 months.
+PMTCT_EID_D: Total infants eligible for early infant diagnosis."
+)
+
+
+```
+
+<br> 
+
+
+```{r EID coverage positivity trend graph , fig.height=5, fig.width=10}
+
+
+
+### EID coverage positivity trend graph ---------------------------------
+
+
+# Generate the text for the caption
+latest_values <- latest_points %>%
+  summarise(
+    EID_coverage_2mo = round(EID_coverage_2mo, 1),
+    EID_coverage = round(EID_coverage, 1)
+  )
+
+# Updated caption with dynamic values
+caption_text <- paste0(
+  "EID Coverage Variables Calculation:\n",
+  "- EID Coverage ≤2 Months: PMTCT_EID_Less_Equal_Two_Months_N / PMTCT_EID_D\n",
+  "- Overall EID Coverage (12 Months): PMTCT_EID_N / PMTCT_EID_D\n\n",
+  "Most recent values (2024 Q4):\n",
+  "EID Coverage ≤2 Months: ", latest_values$EID_coverage_2mo, "%; ",
+  "Overall EID Coverage (12 Months): ", latest_values$EID_coverage, "%"
+)
+
+# Create the plot
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = EID_coverage_2mo, color = "EID Coverage ≤2 Months", group = 1), linewidth = 1) +
+  geom_point(aes(y = EID_coverage_2mo, color = "EID Coverage ≤2 Months"), size = 2) +
+  geom_line(aes(y = EID_coverage, color = "Overall EID Coverage (12 Months)", group = 2), linewidth = 1) +
+  geom_point(aes(y = EID_coverage, color = "Overall EID Coverage (12 Months)"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "EID Coverage ≤2 Months" = "#2057A7", # OHA Denim
+      "Overall EID Coverage (12 Months)" = "#F2BC40" # Golden Sand
+    )
+  ) +
+  labs(
+    title = paste(country_selected, "- Trend of EID Coverage (USAID only)"),
+    subtitle = "PMTCT_EID: Percentage of infants born to women living with HIV who received 
+a virologic HIV test (sample collected) by 12 months of age", 
+    x = " ",
+    y = "Percentage (%)",
+    color = "Metrics",
+    caption = caption_text
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 9)
+  )
+
+
+
+```
+
+<br> 
+
+```{r EID coverage positivity trend graph by prime snu1, fig.height=5, fig.width=10}
+
+
+# Updated caption with dynamic values
+caption_text <- paste0(
+  "EID Coverage Variables Calculation:\n",
+  "- Overall EID Coverage (12 Months): PMTCT_EID_N / PMTCT_EID_D")
+
+
+# Create the simplified plot with Overall EID Coverage only
+p8 = ggplot(df_country_snu1 %>% filter(funding_agency == 'USAID'), 
+       aes(x = paste(fiscal_year, "Q", quarter, sep = ""), group = snu1, color = snu1)) +
+  geom_line(aes(y = EID_coverage), linewidth = 1) +
+  geom_point(aes(y = EID_coverage), size = 2) +
+  scale_color_manual(
+    values = scales::hue_pal()(length(unique(df_country_snu1$snu1))) # Generate colors for snu1 groups
+  ) +
+  labs(
+    title = paste(country_selected, "- Trend of Overall EID Coverage (USAID only)"),
+    subtitle = "PMTCT_EID: Percentage of infants born to women living with HIV who received 
+a virologic HIV test (sample collected) by 12 months of age", 
+    x = " ",
+    y = "Percentage (%)",
+    color = "SNU1"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+
+# Convert ggplot to interactive plotly
+interactive_plot8 <- ggplotly(p8)
+
+interactive_plot8
+
+
+
+```
+
+
+
+<br>
+
+
+
+```{r missed reporting proxy barchart , fig.height=5, fig.width=10}
+
+### Missed reporting proxy -------------------------------------------------
+
+create_highlighted_barplot(
+  data = PVT_OU_df %>%
+    filter(fiscal_year == 2024, quarter == 4) %>%
+    mutate(
+      Missed_reporting_proxy = ifelse(Missed_reporting_proxy < -10, -10, Missed_reporting_proxy)),                
+  indicator_selected = "Missed_reporting_proxy",  # Indicator column to plot
+  y_label = "Missed Reporting Proxy (%)",         # Y-axis label
+  title = "Missed Reporting Proxy by Country (higher number means more missed reporting, USAID only)",    # Plot title
+  caption_selected = "Missed Reporting Proxy = (1 - (PMTCT_HEI_N / PMTCT_EID_N)) * 100.
+PMTCT_EID: infants who had sample collected by 12 months.
+PMTCT_HEI: infants who had a virologic test result returned."
+)
+
+
+```
+
+
+<br> 
+
+```{r missed reporting proxy trend, fig.height=5, fig.width=10}
+
+
+# Create the plot
+ggplot(df_country %>% filter(fiscal_year > 2023), aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = Missed_reporting_proxy, color = "Missed Reporting Proxy", group = 1), linewidth = 1) +
+  geom_point(aes(y = Missed_reporting_proxy, color = "Missed Reporting Proxy"), size = 2) +
+  scale_color_manual(
+    values = c("Missed Reporting Proxy" = "#2057A7") 
+  ) +
+  labs(
+    title = paste(country_selected, "- Trend of Missed Reporting Proxy"),
+    subtitle = "USAID only", 
+    x = " ",
+    y = "Percentage (%)",
+    color = "Metric",
+    caption = caption_text
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 9)
+  )
+
+```
+
+<br> 
+
+
+```{r missed reporting proxy trend pp, fig.height=5, fig.width=10}
+
+# Create the plot grouped by prime_partner_name
+p3 = ggplot(df_country_pp %>% filter(fiscal_year > 2023, 
+                                    funding_agency == 'USAID'), 
+           aes(x = paste(fiscal_year, "Q", quarter, sep = ""), group = prime_partner_name, color = prime_partner_name)) +
+  geom_line(aes(y = Missed_reporting_proxy), linewidth = 1) +
+  geom_point(aes(y = Missed_reporting_proxy), size = 2) +
+  scale_color_manual(
+    values = scales::hue_pal()(length(unique(df_country_pp$prime_partner_name))) # Generate distinct colors for each prime_partner_name
+  ) +
+  labs(
+    title = paste(country_selected, "- Trend of Missed Reporting Proxy by Prime Partner (USAID)"),
+    x = " ",
+    y = "Percentage (%)",
+    color = "Prime Partner"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+
+plot3 = ggplotly(p3)
+
+plot3
+
+
+```
+
+
+## Maternal testing 
+
+
+<br>
+
+```{r ANC1 trend graph, fig.height=5, fig.width=10}
+
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    PMTCT_STAT_D = format(round(PMTCT_STAT_D, 0), big.mark = ","),
+    PMTCT_STAT_N = format(round(PMTCT_STAT_N, 0), big.mark = ",")
+  )
+
+caption_text <- paste0(
+  "Most recent values FY", fiscal_year_selected, ", Q", quarter_selected, "\n",
+  "Total ANC1 Clients (PMTCT_STAT_D): ", latest_values$PMTCT_STAT_D, "\n",
+  "Clients with Known HIV Status (PMTCT_STAT_N): ", latest_values$PMTCT_STAT_N
+)
+
+
+# Create the plot
+ggplot(df_country %>% filter(fiscal_year > 2022), aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = PMTCT_STAT_D, color = "Total ANC1 Clients (PMTCT_STAT_D)", group = 1), linewidth = 1) +
+  geom_point(aes(y = PMTCT_STAT_D, color = "Total ANC1 Clients (PMTCT_STAT_D)"), size = 2) +
+  geom_line(aes(y = PMTCT_STAT_N, color = "Clients with Known HIV Status (PMTCT_STAT_N)", group = 2), linewidth = 1) +
+  geom_point(aes(y = PMTCT_STAT_N, color = "Clients with Known HIV Status (PMTCT_STAT_N)"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "Total ANC1 Clients (PMTCT_STAT_D)" = "#2057A7", # OHA Denim
+      "Clients with Known HIV Status (PMTCT_STAT_N)" = "#F2BC40" # Golden Sand
+    )
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) + 
+  labs(
+    title = paste0(country_selected, " - Trend of ANC1 Clients and Known HIV Status (USAID only)"),
+    x = " ",
+    y = "Number of Clients",
+    color = "Metrics",
+    caption = caption_text
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 8)
+  )
+
+
+
+```
+
+<br>
+
+
+```{r ANC1 missed number bar chart, fig.height=5, fig.width=10}
+### ANC1 missed number --------------------------------------------------
+
+
+create_highlighted_barplot(
+  data = PVT_OU_df %>%
+    filter(fiscal_year == fiscal_year_selected, quarter == quarter_selected, country != 'ALL'),  # Filter for FY2024 Q4
+  indicator_selected = "ANC1_missed_number",   # Indicator column to plot
+  y_label = "Number of Women Not Tested for HIV at ANC1",  # Y-axis label
+  title = "Missed HIV Testing at ANC1 by Country (FY2024 Q4)",  # Plot title
+  caption_selected = "ANC1 Missed Number = (PMTCT_STAT_D - PMTCT_STAT_N).")
+
+```
+
+
+<br>  
+
+
+```{r ANC1 missed number total trend , fig.height=5, fig.width=10}
+
+### trend missed number 
+#### trend overall 
+
+
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""), y = ANC1_missed_number, group = 1)) +
+  geom_line(color = "#2057A7", linewidth = 1.5) +  # OHA Denim for the line
+  geom_point(color = "#2057A7", size = 3) +        # Golden Sand for the points
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = paste0("Trend of Missed HIV Testing at ANC1 (Country - ", country_selected),
+    x = "  ",
+    y = "Number of Women Not Tested for HIV",
+    caption = "ANC1 Missed Number = PMTCT_STAT_D - PMTCT_STAT_N."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+
+```
+
+```{r ANC1 missed number total trend by prime partner , fig.height=5, fig.width=10}
+
+# Create the plot grouped by prime_partner_name
+p4 = ggplot(df_country_pp %>% filter(funding_agency == 'USAID'), 
+            aes(x = paste(fiscal_year, "Q", quarter, sep = ""), y = ANC1_missed_number, group = prime_partner_name, color = prime_partner_name)) +
+  geom_line(linewidth = 1) +  # Line thickness
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = "Trend of Missed HIV Testing at ANC1 by Prime Partner (USAID only)",
+    x = " ",
+    y = "Number of Women Not Tested for HIV",
+    color = "Prime Partner"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+  )
+
+
+plot4 = ggplotly(p4)
+plot4
+
+```
+
+<br>
+
+```{r ANC HIV +, fig.height=5, fig.width=10}
+
+#### ANC1 ART HIV trend graph   -------------------------------------------
+
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    PMTCT_STAT_POS_N = format(round(PMTCT_STAT_POS_N, 0), big.mark = ","),
+    PMTCT_STAT_POS_N_HIV_known_at_entry = format(round(PMTCT_STAT_POS_N_HIV_known_at_entry, 0), big.mark = ","),
+    PMTCT_STAT_POS_N_HIV_newly_diagnosed = format(round(PMTCT_STAT_POS_N_HIV_newly_diagnosed, 0), big.mark = ","),
+    PMTCT_ART_N = format(round(PMTCT_ART_N, 0), big.mark = ",")
+  )
+
+caption_text <- paste0(
+  "Most recent values (2024 Q4)\n",
+  "HIV-Positive (Total, PMTCT_STAT_POS_N): ", latest_values$PMTCT_STAT_POS_N, "\n",
+  "HIV-Positive Known at Entry: ", latest_values$PMTCT_STAT_POS_N_HIV_known_at_entry, "\n",
+  "HIV-Positive Newly Diagnosed: ", latest_values$PMTCT_STAT_POS_N_HIV_newly_diagnosed, "\n",
+  "HIV-Positive on ART (PMTCT_ART_N): ", latest_values$PMTCT_ART_N
+)
+
+# Create the plot
+ggplot(df_country %>% filter(fiscal_year > 2022), aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = PMTCT_STAT_POS_N, color = "HIV-Positive (Total)", group = 1), linewidth = 1) +
+  geom_point(aes(y = PMTCT_STAT_POS_N, color = "HIV-Positive (Total)"), size = 2) +
+  geom_line(aes(y = PMTCT_STAT_POS_N_HIV_known_at_entry, color = "HIV-Positive Known at Entry", group = 2), linewidth = 1) +
+  geom_point(aes(y = PMTCT_STAT_POS_N_HIV_known_at_entry, color = "HIV-Positive Known at Entry"), size = 2) +
+  geom_line(aes(y = PMTCT_STAT_POS_N_HIV_newly_diagnosed, color = "HIV-Positive Newly Diagnosed", group = 3), linewidth = 1) +
+  geom_point(aes(y = PMTCT_STAT_POS_N_HIV_newly_diagnosed, color = "HIV-Positive Newly Diagnosed"), size = 2) +
+  geom_line(aes(y = PMTCT_ART_N, color = "HIV-Positive on ART", group = 4), linewidth = 1) +
+  geom_point(aes(y = PMTCT_ART_N, color = "HIV-Positive on ART"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "HIV-Positive (Total)" = "#2057A7",                # OHA Denim
+      "HIV-Positive Known at Entry" = "#F2BC40",        # Golden Sand
+      "HIV-Positive Newly Diagnosed" = "#287C6F",       # Genoa
+      "HIV-Positive on ART" = "#C43D4D"                # Old Rose
+    )
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = paste0(country_selected, " - Trend of HIV Diagnoses and ART Coverage for PBFW"),
+    subtitle = 'USAID only', 
+    x = " ",
+    y = "Number of Clients",
+    color = "Metrics",
+    caption = caption_text) + 
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 8)
+  )
+
+```
+<br> 
+
+```{r ANC HIV + by snu1, fig.height=5, fig.width=10}
+
+#### ANC1 ART HIV trend graph   -------------------------------------------
+
+# Create the plot grouped by snu1
+p5 = ggplot(df_country_snu1 %>% filter(fiscal_year > 2022, 
+                                  funding_agency == 'USAID'), 
+       aes(x = paste(fiscal_year, "Q", quarter, sep = ""), group = snu1, color = snu1)) +
+  geom_line(aes(y = PMTCT_STAT_POS_N_HIV_newly_diagnosed), linewidth = 1) +
+  geom_point(aes(y = PMTCT_STAT_POS_N_HIV_newly_diagnosed), size = 2) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = paste0(country_selected, " - Trend of New HIV Diagnoses (PMTCT_STAT_POS_new) by SNU1 (USAID)"),
+    x = " ",
+    y = "Number of Clients",
+    color = "SNU1"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 8)
+  )
+
+plot5 = ggplotly(p5)
+plot5
+
+```
+
+<br> 
+
+
+```{r ANC1 missed HIV+ women not on ART barchat, fig.height=5, fig.width=10}
+
+create_highlighted_barplot(
+  data = PVT_OU_df %>%
+    filter(fiscal_year == fiscal_year_selected, quarter == quarter_selected),  # Filter for FY2024 Q4
+  indicator_selected = "HIV_not_on_ART",       # Indicator column to plot
+  y_label = "Number of HIV-Positive Women Not on ART",  # Y-axis label
+  title = "HIV-Positive Women Not on ART by Country (USAID only)",  # Plot title
+  caption_selected = "HIV-Positive Women Not on ART = PMTCT_STAT_POS_N - PMTCT_ART_N.
+PMTCT_STAT_POS_N: Total HIV-positive women identified.
+PMTCT_ART_N: Total HIV-positive women on ART."
+)
+
+```
+
+
+<br> 
+
+
+```{r ANC1 missed HIV+ women not on ART, fig.height=5, fig.width=10}
+
+### HIV + not on ART -------------------------------
+
+# Create the trend plot
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""), y = HIV_not_on_ART, group = 1)) +
+  geom_line(color = "#2057A7", linewidth = 1.5) +  # OHA Denim for the line
+  geom_point(color = "#2057A7", size = 3) +        # Golden Sand for the points
+  scale_y_continuous(labels = scales::comma_format()) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Add horizontal line at y = 0
+  labs(
+    title = paste0(country_selected, " - Trend of HIV-Positive Women Not on ART"),
+    x = " ",
+    y = "Number of HIV-Positive Women Not on ART",
+    caption = "HIV-Positive Women Not on ART = PMTCT_STAT_POS_N - PMTCT_ART_N."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+<br> 
+
+
+```{r ANC1 missed HIV+ women not on ART by pp, fig.height=5, fig.width=10}
+
+### HIV + not on ART by prime partner-------------------------------
+
+# Create the trend plot grouped by prime_partner_name
+p6 = ggplot(df_country_pp %>% filter(funding_agency == 'USAID'), aes(x = paste(fiscal_year, "Q", quarter, sep = ""), y = HIV_not_on_ART, group = prime_partner_name, color = prime_partner_name)) +
+  geom_line(linewidth = 1.5) +  # Line thickness
+  geom_point(size = 3) +        # Point size
+  scale_y_continuous(labels = scales::comma_format()) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black") +  # Add horizontal line at y = 0
+  labs(
+    title = paste0(country_selected, " - Trend of HIV-Positive Women Not on ART by Prime Partner (USAID only)"),
+    x = " ",
+    y = "Number of HIV-Positive Women Not on ART",
+    color = "Prime Partner",
+    caption = "HIV-Positive Women Not on ART = PMTCT_STAT_POS_N - PMTCT_ART_N."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 9)
+  )
+
+plot6 = ggplotly(p6)
+plot6
+
+```
+
+
+
+
+
+<br> 
+
+```{r ANC positivity trend graph, fig.height=5, fig.width=10}
+
+
+### ANC positivity trend graph ---------------------------------
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    positivity_new = round(positivity_new, 1),
+    positivity_postANC1_breastfeeding = round(positivity_postANC1_breastfeeding, 1),
+    positivity_postANC1_preg = round(positivity_postANC1_preg, 1),
+    positivity_overall_ANC = round(positivity_overall_ANC, 1)
+  )
+
+caption_text <- paste0(
+  "Most recent values for FY", fiscal_year_selected, " Q", quarter_selected, "\n", 
+  "New Positivity: ", latest_values$positivity_new, "%\n",
+  "Positivity (Breastfeeding): ", latest_values$positivity_postANC1_breastfeeding, "%\n",
+  "Positivity (Pregnancy): ", latest_values$positivity_postANC1_preg, "%\n",
+  "Overall Positivity (ANC): ", latest_values$positivity_overall_ANC, "% \n ", 
+  "Positivity Variables Calculation:\n
+  Overall Positivity (ANC): PMTCT_STAT_POS_N / PMTCT_STAT_N; 
+  New Positivity: PMTCT_STAT_POS_N_HIV_newly_diagnosed / PMTCT_STAT_N;
+  Positivity (Breastfeeding): HTS_TST_POS_N_PMTCT_POSTANC1_breastfeeding / HTS_TST_N_PMTCT_POSTANC1_breastfeeding;
+  Positivity (Pregnancy): HTS_TST_POS_N_PMTCT_POSTANC1_PregLD / HTS_TST_N_PMTCT_POSTANC1_PregLD"
+)
+
+# Create the plot
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = positivity_new, color = "New Positivity", group = 1), linewidth = 1) +
+  geom_point(aes(y = positivity_new, color = "New Positivity"), size = 2) +
+  geom_line(aes(y = positivity_postANC1_breastfeeding, color = "Positivity (Breastfeeding)", group = 2), linewidth = 1) +
+  geom_point(aes(y = positivity_postANC1_breastfeeding, color = "Positivity (Breastfeeding)"), size = 2) +
+  geom_line(aes(y = positivity_postANC1_preg, color = "Positivity (Pregnancy)", group = 3), linewidth = 1) +
+  geom_point(aes(y = positivity_postANC1_preg, color = "Positivity (Pregnancy)"), size = 2) +
+  geom_line(aes(y = positivity_overall_ANC, color = "Overall Positivity (ANC)", group = 4), linewidth = 1) +
+  geom_point(aes(y = positivity_overall_ANC, color = "Overall Positivity (ANC)"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "New Positivity" = "#2057A7", # OHA Denim
+      "Positivity (Breastfeeding)" = "#F2BC40", # Golden Sand
+      "Positivity (Pregnancy)" = "#287C6F", # Genoa
+      "Overall Positivity (ANC)" = "#C43D4D" # Old Rose
+    )
+  ) +
+  labs(
+    title = "Trend of ANC Positivity ",
+    x = " ",
+    y = "Percentage (%)",
+    color = "Metrics",
+    caption = caption_text) + 
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 8)
+  )
+
+
+
+
+
+
+
+```
+
+
+
+
+## Viral suppression among PBFW 
+
+<br>  
+
+```{r viral suppression barplot, fig.height=5, fig.width=10}
+### Viral suppression -------------------------------------------------
+
+
+create_highlighted_barplot(
+  data = PVT_OU_df %>%
+    filter(fiscal_year == fiscal_year_selected, quarter == quarter_selected),  
+  indicator_selected = "viral_suppression",     
+  y_label = "Viral Suppression (%)", 
+  y_min = 75,
+  y_max = 110,
+  title = "Viral Suppression by Country (FY2024 Q4) among PBFW",  
+  caption_selected = "Viral Suppression = (TX_PVLS_N / TX_PVLS_D) * 100.
+TX_PVLS_N: Number of individuals with a suppressed viral load (<1000 copies/ml).
+TX_PVLS_D: Number of individuals with a viral load result returned."
+)
+
+
+
+```
+
+<br>
+
+
+```{r Viral suppression graphs, fig.height=5, fig.width=10}
+
+
+#### Viral suppression graph
+
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    viral_suppression = round(viral_suppression, 1),
+    viral_suppression_pregnant = round(viral_suppression_pregnant, 1),
+    viral_suppression_breastfeeding = round(viral_suppression_breastfeeding, 1)
+  )
+
+caption_text <- paste0(
+  "Most recent values for FY", fiscal_year_selected, " Q", quarter_selected, "\n", 
+  "Viral Suppression: ", latest_values$viral_suppression, "%\n",
+  "Viral Suppression (Pregnant): ", latest_values$viral_suppression_pregnant, "%\n",
+  "Viral Suppression (Breastfeeding): ", latest_values$viral_suppression_breastfeeding, "%"
+)
+
+# Create the plot
+ggplot(df_country %>% filter(fiscal_year > 2022), aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = viral_suppression, color = "Viral Suppression", group = 1), linewidth = 1) +
+  geom_point(aes(y = viral_suppression, color = "Viral Suppression"), size = 2) +
+  geom_line(aes(y = viral_suppression_pregnant, color = "Viral Suppression (Pregnant)", group = 2), linewidth = 1) +
+  geom_point(aes(y = viral_suppression_pregnant, color = "Viral Suppression (Pregnant)"), size = 2) +
+  geom_line(aes(y = viral_suppression_breastfeeding, color = "Viral Suppression (Breastfeeding)", group = 3), linewidth = 1) +
+  geom_point(aes(y = viral_suppression_breastfeeding, color = "Viral Suppression (Breastfeeding)"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "Viral Suppression" = "#2057A7", # OHA Denim
+      "Viral Suppression (Pregnant)" = "#F2BC40", # Golden Sand
+      "Viral Suppression (Breastfeeding)" = "#287C6F" # Genoa
+    )
+  ) +
+  labs(
+    title = "Trend of Viral Suppression (TX_PVLS) among PBFW ",
+    x = " ",
+    y = "Percentage (%)",
+    color = "Metrics", 
+    caption = caption_text
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+<br> 
+
+
+
+```{r Viral suppression graphs pp, fig.height=5, fig.width=10}
+
+
+#### Viral suppression graph - PP
+
+
+
+# Create the plot for viral suppression by prime_partner_name
+p2 = ggplot(df_country_pp %>% filter(fiscal_year > 2022, 
+                                funding_agency == 'USAID'), 
+       aes(x = paste(fiscal_year, "Q", quarter, sep = ""), y = viral_suppression, group = prime_partner_name, color = prime_partner_name)) +
+  geom_line(linewidth = 1.5) +
+  geom_point(size = 3) +
+  labs(
+    title = "Trend of Viral Suppression (TX_PVLS) by Prime Partner",
+    x = " ",
+    y = "Percentage (%)",
+    color = "Prime Partner"
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+plot2 = ggplotly(p2)
+plot2
+
+
+```
+
+
+<br>
+
+```{r Viral suppression graphs snu1, fig.height=5, fig.width=10}
+
+
+#### Viral suppression graph - SNU1
+
+# Create the plot for viral suppression by prime_partner_name
+p1 = ggplot(df_country_snu1 %>% filter(fiscal_year > 2022, 
+                                funding_agency == 'USAID'), 
+       aes(x = paste(fiscal_year, "Q", quarter, sep = ""), y = viral_suppression, group = snu1, color = snu1)) +
+  geom_line(linewidth = 1.5) +
+  geom_point(size = 3) +
+  labs(
+    title = "Trend of Viral Suppression (TX_PVLS) by SNU1 (USAID only)",
+    x = " ",
+    y = "Percentage (%)",
+    color = "SNU1",
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+plot1 = ggplotly(p1)
+
+plot1
+
+```
+
+
+
+
+<br> 
+
+## PrEP among PBFW 
+
+
+<br>
+
+
+```{r PrEP CT, fig.height=5, fig.width=10}
+
+
+### PrEP -------------------------------------------------------------------
+
+
+# Create the text for the annotation box
+latest_values <- latest_points %>%
+  summarise(
+    PrEP_CT_N = round(PrEP_CT_N, 1),
+    PrEP_CT_N_breastfeeding = round(PrEP_CT_N_breastfeeding, 1),
+    PrEP_CT_N_pregnant = round(PrEP_CT_N_pregnant, 1)
+  )
+
+caption_text <- paste0(
+  "PrEP CT Metrics:
+  PrEP_CT_N: Total number of clients currently on PrEP.
+  PrEP_CT_N_breastfeeding: PrEP CT for breastfeeding clients.
+  PrEP_CT_N_pregnant: PrEP CT for pregnant clients. \n \n", 
+  "Most recent values, FY", fiscal_year_selected, " Q", quarter_selected, "\n", 
+  "PrEP CT Total: ", latest_values$PrEP_CT_N, "\n",
+  "PrEP CT (Breastfeeding): ", latest_values$PrEP_CT_N_breastfeeding, "\n",
+  "PrEP CT (Pregnant): ", latest_values$PrEP_CT_N_pregnant
+)
+
+# Create the plot
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = PrEP_CT_N, color = "PrEP CT Total", group = 1), linewidth = 1) +
+  geom_point(aes(y = PrEP_CT_N, color = "PrEP CT Total"), size = 2) +
+  geom_line(aes(y = PrEP_CT_N_breastfeeding, color = "PrEP CT (Breastfeeding)", group = 2), linewidth = 1) +
+  geom_point(aes(y = PrEP_CT_N_breastfeeding, color = "PrEP CT (Breastfeeding)"), size = 2) +
+  geom_line(aes(y = PrEP_CT_N_pregnant, color = "PrEP CT (Pregnant)", group = 3), linewidth = 1) +
+  geom_point(aes(y = PrEP_CT_N_pregnant, color = "PrEP CT (Pregnant)"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "PrEP CT Total" = "#2057A7",              # OHA Denim
+      "PrEP CT (Breastfeeding)" = "#F2BC40",   # Golden Sand
+      "PrEP CT (Pregnant)" = "#287C6F"         # Genoa
+    )
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = paste0(country_selected, " - Trend of PrEP CT (USAID only)"),
+    x = " ",
+    y = "Counts",
+    color = "Metrics",
+    caption = caption_text) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 9)
+  )
+
+```
+
+<br>
+
+```{r PrEP new , fig.height=5, fig.width=10}
+
+latest_values <- latest_points %>%
+  summarise(
+    PrEP_NEW_N = round(PrEP_NEW_N, 1),
+    PrEP_NEW_N_breastfeeding = round(PrEP_NEW_N_breastfeeding, 1),
+    PrEP_NEW_N_pregnant = round(PrEP_NEW_N_pregnant, 1)
+  )
+
+caption_text <- paste0(
+  "PrEP NEW Metrics:
+  PrEP_NEW_N: Total number of new clients on PrEP.
+  PrEP_NEW_N_breastfeeding: PrEP NEW for breastfeeding clients.
+  PrEP_NEW_N_pregnant: PrEP NEW for pregnant clients. \n \n", 
+  "Most recent values, FY", fiscal_year_selected, " Q", quarter_selected, "\n", 
+  "PrEP NEW Total: ", latest_values$PrEP_NEW_N, "\n",
+  "PrEP NEW (Breastfeeding): ", latest_values$PrEP_NEW_N_breastfeeding, "\n",
+  "PrEP NEW (Pregnant): ", latest_values$PrEP_NEW_N_pregnant
+)
+
+# Create the plot
+ggplot(df_country, aes(x = paste(fiscal_year, "Q", quarter, sep = ""))) +
+  geom_line(aes(y = PrEP_NEW_N, color = "PrEP NEW Total", group = 1), linewidth = 1) +
+  geom_point(aes(y = PrEP_NEW_N, color = "PrEP NEW Total"), size = 2) +
+  geom_line(aes(y = PrEP_NEW_N_breastfeeding, color = "PrEP NEW (Breastfeeding)", group = 2), linewidth = 1) +
+  geom_point(aes(y = PrEP_NEW_N_breastfeeding, color = "PrEP NEW (Breastfeeding)"), size = 2) +
+  geom_line(aes(y = PrEP_NEW_N_pregnant, color = "PrEP NEW (Pregnant)", group = 3), linewidth = 1) +
+  geom_point(aes(y = PrEP_NEW_N_pregnant, color = "PrEP NEW (Pregnant)"), size = 2) +
+  scale_color_manual(
+    values = c(
+      "PrEP NEW Total" = "#2057A7",              # OHA Denim
+      "PrEP NEW (Breastfeeding)" = "#F2BC40",   # Golden Sand
+      "PrEP NEW (Pregnant)" = "#287C6F"         # Genoa
+    )
+  ) +
+  scale_y_continuous(labels = scales::comma_format()) +
+  labs(
+    title = paste0(country_selected, " - Trend of PrEP NEW"),
+    x = " ",
+    y = "Counts",
+    color = "Metrics",
+    caption = caption_text
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5),
+    plot.caption = element_text(hjust = 0, size = 9)
+  )
+
+
+
+
+
+```
+  
+<br>
+
+<br>
+
+Please contact Paul George (pgeorge@usaid.gov) with any comments/concerns/errors/suggestions for improvement for this report.  
+
