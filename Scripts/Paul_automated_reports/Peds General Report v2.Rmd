@@ -1,0 +1,836 @@
+---
+title: "`r paste(' Pediatric Overview Report:', '- FY', params$fiscal_year, 'Quarter', params$quarter)`"
+output: html_document
+params:
+  fiscal_year: 2024
+  quarter: 4
+---
+
+
+### All charts and tables use USAID-specific data from the Africa region, Haiti, and the Dominican Republic. 
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+###################### INTRODUCTION ---------------------------------------------------
+
+# Steps for creating the automated pediatric general report:
+    #1. Download the country SITE x IM files
+    #2. Run creating adult peds adol df by coutnry.R file to create the summary dataframes 
+    #3. Run the RMarkdown file to generate the report   ***** this code represents this step *****
+
+library(tidyverse)
+library(ggplot2)
+library(kableExtra)
+library(knitr)
+library(scales)
+
+
+rm(list = ls())
+
+load(file = 'C:/Users/georg/Desktop/databases/output/adult_adol_peds_OU/OU_adult_peds_adol_all_df.rda')
+
+
+
+# Replace Inf and -Inf with NA across all columns in the dataframe
+OU_adult_peds_adol_all_df[] <- lapply(OU_adult_peds_adol_all_df, function(col) {
+  if (is.numeric(col)) {
+    col[is.infinite(col)] <- NA
+  }
+  return(col)
+})
+
+
+OU_adult_peds_adol_all_df <- OU_adult_peds_adol_all_df %>%
+  mutate(
+    Proxy_Linkage = Proxy_Linkage * 100,
+    Proxy_Continuity = Proxy_Continuity * 100,
+    Proxy_VL_Coverage = Proxy_VL_Coverage * 100,
+    Viral_Suppression = Viral_Suppression * 100,
+    Proxy_Positivity = Proxy_Positivity * 100
+  )
+
+
+# Get the current date and time
+creation_time <- Sys.time()
+formatted_time <- format(creation_time, "%Y-%m-%d %H:%M:%S")
+
+```
+
+`r formatted_time`
+
+<br> 
+
+
+```{r summary table}
+
+### Summary stats by adults vs adolescents vs pediatrics --------------------------------------------------
+
+# Filter and summarize the data for country == 'ALL', FY2024, Q4
+table_all_fy2024_q4 <- OU_adult_peds_adol_all_df %>%
+  filter(country == "ALL", fiscal_year == 2024, quarter == "4") %>%
+  select(
+    age_group, HTS_TST_N, HTS_TST_POS_N, Numbers_Needed_to_Test, Proxy_Positivity, 
+    Proxy_Linkage,  Proxy_VL_Coverage,
+    Viral_Suppression,  TX_CURR_N, Proxy_Continuity, MMD_3_month, MMD_6_month
+  ) %>%
+  rename(
+    `Age Group` = age_group,
+    `HTS Tested` = HTS_TST_N,
+    `HTS Positives` = HTS_TST_POS_N,
+    `TX Curr` = TX_CURR_N,
+    `Proxy Linkage` = Proxy_Linkage,
+    `Proxy Continuity` = Proxy_Continuity,
+    `Viral Coverage` = Proxy_VL_Coverage,
+    `Viral Suppression` = Viral_Suppression,
+    `Positivity` = Proxy_Positivity,
+    `Numbers Needed to Test` = Numbers_Needed_to_Test, 
+    `MMD >= 3 months` = MMD_3_month, 
+    `MMD >= 6 months` = MMD_6_month
+  )
+
+
+
+# Extract metrics for age_group == "peds"
+peds_metrics <- table_all_fy2024_q4 %>%
+  filter(`Age Group` == "peds")
+
+# Assign each metric to individual variables
+total_HTS_TST <- peds_metrics$`HTS Tested`
+total_HTS_TST_POS <- peds_metrics$`HTS Positives`
+total_TX_CURR_N <- peds_metrics$`TX Curr`
+total_linkage <- peds_metrics$`Proxy Linkage`
+total_coverage <- peds_metrics$`Viral Coverage`
+total_suppression <- peds_metrics$`Viral Suppression`
+
+# Format numbers with commas and convert to character strings
+total_HTS_TST  <- comma(total_HTS_TST, accuracy = 1)
+total_HTS_TST_POS  <- comma(total_HTS_TST_POS, accuracy = 1)
+total_TX_CURR_N  <- comma(total_TX_CURR_N, accuracy = 1)
+total_linkage  <- comma(total_linkage, accuracy = 0.1)
+total_coverage  <- comma(total_coverage, accuracy = 0.1)
+total_suppression  <- comma(total_suppression, accuracy = 0.1)
+```
+
+<br> 
+
+## Summary for FY2024 Q4 - Pediatrics
+
+For **FY2024 Q4**, the following key metrics for the **Pediatrics (<15 years) age group (Africa data)** were achieved:
+
+- **HTS Tested:** `r total_HTS_TST`
+- **HTS Positives:** `r total_HTS_TST_POS`
+- **Current on Treatment (TX Curr):** `r total_TX_CURR_N`
+- **Linkage:** `r total_linkage`%
+- **Viral Coverage:** `r total_coverage`%
+- **Viral Suppression:** `r total_suppression`%
+
+<br>
+
+
+```{r sum table with Kable extra}
+
+table_all_fy2024_q4 %>%
+  kbl(digits = 1) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  column_spec(1, bold = TRUE) %>%
+  add_footnote(
+    "Metrics were calculated as follows: Proxy Linkage = TX_NEW / HTS_TST_POS, Proxy Continuity of Treatment = TX_CURR / (TX_CURR - TX_NET_NEW + TX_NEW), Viral Coverage = TX_PVLS_D / TX_CURR [2 Q Prior], Viral Suppression = TX_PVLS_N / TX_D, Proxy Positivity = HTS_TST_POS / HTS_TST, and Numbers Needed to Test = HTS_TST / HTS_TST_POS.",
+    notation = "none"
+  )
+
+
+
+```
+
+<br>
+
+```{r trend graph, fig.height=6, fig.width=10}
+
+### Trend graph of linkage, coverage, suppression across time -----------------------------------------------------------
+
+
+
+# -----------------------------
+# 1. Filter and Prepare the Data
+# -----------------------------
+trend_data <- OU_adult_peds_adol_all_df %>%
+  filter(country == "ALL") %>%
+  select(fiscal_year, quarter, age_group, Proxy_VL_Coverage, Proxy_Linkage, Viral_Suppression) %>%
+  mutate(
+    Time = paste0("FY", fiscal_year, " Q", quarter),
+    Time = factor(Time, levels = unique(Time)) # Ensure chronological order
+  ) %>%
+  pivot_longer(
+    cols = c(Proxy_VL_Coverage, Proxy_Linkage, Viral_Suppression),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# -------------------------------
+# 2. Extract Most Recent Data Points
+# -------------------------------
+# This step gathers the latest values for each metric by age group.
+most_recent_linkage <- trend_data %>% 
+  filter(Metric == "Proxy_Linkage") %>% 
+  mutate(Time = as.character(Time)) %>% 
+  group_by(Metric, age_group) %>%
+  filter(Time == max(Time)) %>% 
+  summarize(Value = last(Value), .groups = "drop") %>%
+  mutate(
+    Metric_Label = recode(Metric,
+      Proxy_VL_Coverage = "Coverage",
+      Proxy_Linkage    = "Linkage",
+      Viral_Suppression= "Suppression"
+    ),
+    Text = paste(Metric_Label, "(", age_group, "):", round(Value, 1))
+  )
+
+most_recent_coverage <- trend_data %>% 
+  filter(Metric == "Proxy_VL_Coverage") %>% 
+  mutate(Time = as.character(Time)) %>% 
+  group_by(Metric, age_group) %>%
+  filter(Time == max(Time)) %>% 
+  summarize(Value = last(Value), .groups = "drop") %>%
+  mutate(
+    Metric_Label = recode(Metric,
+      Proxy_VL_Coverage = "Coverage",
+      Proxy_Linkage    = "Linkage",
+      Viral_Suppression= "Suppression"
+    ),
+    Text = paste(Metric_Label, "(", age_group, "):", round(Value, 1))
+  )
+
+most_recent_suppression <- trend_data %>% 
+  filter(Metric == "Viral_Suppression") %>% 
+  mutate(Time = as.character(Time)) %>% 
+  group_by(Metric, age_group) %>%
+  filter(Time == max(Time)) %>% 
+  summarize(Value = last(Value), .groups = "drop") %>%
+  mutate(
+    Metric_Label = recode(Metric,
+      Proxy_VL_Coverage = "Coverage",
+      Proxy_Linkage    = "Linkage",
+      Viral_Suppression= "Suppression"
+    ),
+    Text = paste(Metric_Label, "(", age_group, "):", round(Value, 1))
+  )
+
+# -----------------------------
+# 3. Combine Text for the Caption
+# -----------------------------
+# Create a single string summarizing the latest values for all metrics.
+caption_text <- paste(
+  "Latest Data by Age Group:\n",
+  paste(most_recent_linkage$Text, collapse = "; "), "\n",
+  paste(most_recent_coverage$Text, collapse = "; "), "\n",
+  paste(most_recent_suppression$Text, collapse = "; "), "\n\n",
+  "Metric Calculations:\n",
+  "• Proxy Linkage = TX_NEW / HTS_TST_POS\n",
+  "• Proxy VL Coverage = TX_PVLS_D / TX_CURR [2 Q Prior]\n",
+  "• Viral Suppression = TX_PVLS_N / TX_D",
+  sep = ""
+)
+
+# -----------------------------
+# 4. Define USAID Colors
+# -----------------------------
+usaid_colors <- c("peds" = "#15478A", "adolescent" = "#5BB5D5", "adult" = "#F36428")
+
+# -----------------------------
+# 5. Create the Faceted Plot
+# -----------------------------
+p <- ggplot(trend_data, aes(x = Time, y = Value, color = age_group, group = age_group)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_wrap(
+    ~Metric, 
+    ncol = 1, 
+    scales = "free_y",
+    labeller = as_labeller(c(
+      Proxy_VL_Coverage = "Coverage",
+      Proxy_Linkage = "Linkage",
+      Viral_Suppression = "Suppression"
+    ))
+  ) +
+  scale_color_manual(values = usaid_colors) +
+  labs(
+    title = "Trends Across Time by Age Group",
+    x = "",
+    y = "Value",
+    color = "Age Group",
+    caption = caption_text  # <--- Insert the combined text into the caption
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11), 
+    plot.caption = element_text(size = 8)  # Set caption size to 8
+
+  )
+
+# -----------------------------
+# 6. Print the Plot
+# -----------------------------
+p
+
+
+
+
+```
+
+<br> 
+
+```{r country comparison bar plot, fig.height=6, fig.width=10}
+
+### Highlighted bar plot for each metric by country  
+
+# Filter the most recent fiscal year and quarter
+most_recent_data <- OU_adult_peds_adol_all_df %>%
+  filter(
+    fiscal_year == max(fiscal_year), 
+    quarter == max(quarter[fiscal_year == max(fiscal_year)])
+  )
+
+most_recent_data <- most_recent_data %>%
+  mutate(
+    Proxy_Linkage = round(Proxy_Linkage, 1),
+    Viral_Suppression = round(Viral_Suppression, 1),
+    Proxy_Positivity = round(Proxy_Positivity, 1)
+  )
+
+
+
+
+create_highlighted_barplot <- function(data, indicator, age_groups_selected, y_label, title) {
+  # Prepare data for plotting
+  plot_data <- data %>%
+    filter(age_group %in% age_groups_selected) %>%  # Filter by selected age groups
+    select(country, age_group, !!sym(indicator), fiscal_year, quarter, TX_CURR_N) %>% 
+    filter(!is.na(!!sym(indicator)), TX_CURR_N > 100)  # Remove rows with NA for the indicator and TX_CURR_N <= 50
+  
+  # Add a column to identify the selected (ALL) country
+  plot_data <- plot_data %>%
+    mutate(
+      highlight = ifelse(country == "ALL", "Selected", "Other")
+    )
+  
+  # Create a custom order for countries based on the first age group selected
+  country_order <- plot_data %>%
+    filter(age_group == age_groups_selected[1]) %>%  # Use the first selected age group
+    arrange(desc(!!sym(indicator))) %>%  # Sort by the indicator
+    pull(country)  # Extract the ordered country list
+  
+  # Add ordering based on country pairs
+  plot_data <- plot_data %>%
+    mutate(
+      country = factor(country, levels = country_order),  # Order countries
+      age_group_ordered = paste(country, age_group, sep = " - ")  # Create unique IDs for bars
+    ) %>% 
+    filter(!is.na(country))
+  
+  # Extract fiscal year and quarter for the subtitle
+  fiscal_year <- unique(plot_data$fiscal_year)
+  quarter <- unique(plot_data$quarter)
+  subtitle <- paste("Fiscal Year:", fiscal_year, "| Quarter:", quarter)
+  
+  # Define colors for age groups
+  age_group_colors <- c("peds" = "#15478A", "adolescent" = "#5BB5D5", "adult" = "#F36428")
+  
+  # Plot
+  ggplot(plot_data, aes(x = country, y = !!sym(indicator), fill = age_group)) +
+    geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +  # Dodge to separate age groups
+    scale_y_continuous(labels = scales::comma_format()) + 
+    scale_fill_manual(values = age_group_colors) +
+    # Add geom_text only for the "ALL" country rows
+    geom_text(
+      data = subset(plot_data, highlight == "Selected"),
+      aes(label = round(!!sym(indicator)), group = age_group),
+      vjust = -0.5,
+      size = 4,
+      position = position_dodge(width = 0.8),  # Match dodge position
+      color = "black"
+    ) +
+    labs(
+      title = title,
+      subtitle = subtitle, 
+      x = "",  
+      y = y_label,
+      fill = "Age Group", 
+      caption = "Source: DATIM OUxIM file"
+    ) +
+    theme_classic() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "right"  # Display legend for age groups
+    )
+}
+
+
+
+# Use the function for a specific indicator 
+create_highlighted_barplot(
+  data = most_recent_data, 
+  age_groups_selected = 'peds', 
+  indicator = "Viral_Suppression",
+  y_label = "Viral_Suppression",
+  title = "Viral_Suppression by Country"
+)
+
+create_highlighted_barplot(
+  data = most_recent_data, 
+  age_groups_selected = c('peds', 'adult'), 
+  indicator = "Viral_Suppression",
+  y_label = "Viral_Suppression",
+  title = "Viral_Suppression by Country and Age Group"
+)
+
+
+create_highlighted_barplot(
+  data = most_recent_data, 
+  age_groups_selected = c('peds', 'adult'), 
+  indicator = "MMD_3_month",
+  y_label = "MMD 3 months",
+  title = "Percentage of 3month+MMD by country" 
+)
+
+
+create_highlighted_barplot(
+  data = most_recent_data, 
+  age_groups_selected = c('peds', 'adult'), 
+  indicator = "MMD_6_month",
+  y_label = "MMD 6 months",
+  title = "Percentage of 6month+MMD by country" 
+)
+
+
+
+```
+
+
+<br> 
+
+```{r MMD across time, fig.height=6, fig.width=10}
+##### MMD across time   --------------------------------------
+
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, fiscal_year, quarter, time_period, time_numeric, MMD_3_month, MMD_6_month) %>%
+  pivot_longer(
+    cols = c(MMD_3_month, MMD_6_month),
+    names_to = "MMD_Type",
+    values_to = "MMD_Value"
+  ) %>%
+  filter(!is.na(MMD_Value)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for age groups
+age_group_colors <- c(
+  "peds" = "#15478A",         # Midnight Blue
+  "adolescent" = "#5BB5D5",   # Viking
+  "adult" = "#F36428"          # Sun Kissed 
+)
+
+# Define linetypes for MMD types
+mmd_linetypes <- c(
+  "MMD_3_month" = "solid",
+  "MMD_6_month" = "dashed"
+)
+
+# Create the trend plot
+ggplot(plot_data, aes(x = time_numeric, y = MMD_Value)) +
+  geom_line(aes(color = age_group, linetype = MMD_Type), size = 1.2) +
+  geom_point(aes(color = age_group, shape = MMD_Type), size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(
+    labels = percent_format(scale = 1),
+    limits = c(0, 100)
+  ) +
+  scale_color_manual(
+    values = age_group_colors,
+    name = "Age Group"
+  ) +
+  scale_linetype_manual(
+    values = mmd_linetypes,
+    labels = c("MMD ≥ 3 Months", "MMD ≥ 6 Months"),
+    name = "MMD Type"
+  ) +
+  scale_shape_manual(
+    values = c("MMD_3_month" = 16, "MMD_6_month" = 17),
+    labels = c("MMD ≥ 3 Months", "MMD ≥ 6 Months"),
+    name = "MMD Type"
+  ) +
+  labs(
+    title = "Trends in Multi-Month Dispensing (MMD) Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "Percentage (%)",
+    caption = "Source: DATIM OUxIM file. \n 3+ MMD = (3 month MMD + 6 month MMD) / (3 month + 6 month + <3 month); \n 6 month MMD = 6 month MMD / (3 month + 6 month + <3 month)."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  )
+
+
+```
+
+<br> 
+
+```{r TX_curr across time, fig.height=6, fig.width=10}
+
+
+
+### TX_CURR across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, fiscal_year, quarter, time_period, time_numeric, TX_CURR_N) %>%
+  filter(!is.na(TX_CURR_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for age groups (OHA Recommended Palette)
+age_group_colors <- c(
+  "peds" = "#15478A",         # Midnight Blue
+  "adolescent" = "#5BB5D5",   # Viking
+  "adult" = "#F36428"          # Sun Kissed
+)
+
+# Create the trend plot with facets and free y-axis
+ggplot(plot_data, aes(x = time_numeric, y = TX_CURR_N, color = age_group)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_color_manual(
+    values = age_group_colors,
+    name = "Age Group"
+  ) +
+  labs(
+    title = "Trends in TX_CURR Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "TX_CURR",
+    caption = "Source: DATIM OUxIM file\nThe dip in 2023Q4 is due to Nigeria data omitted from that quarter due to data quality issues."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  facet_wrap(~ age_group, ncol = 1, scales = "free_y")
+
+
+
+```
+
+<br> 
+
+```{r HTS_TST and _POS across time, fig.height=6, fig.width=10}
+
+### HTS_TST across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, fiscal_year, quarter, time_period, time_numeric, HTS_TST_N) %>%
+  filter(!is.na(HTS_TST_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for age groups (OHA Recommended Palette)
+age_group_colors <- c(
+  "peds" = "#15478A",         # Midnight Blue
+  "adolescent" = "#5BB5D5",   # Viking
+  "adult" = "#F36428"          # Sun Kissed
+)
+
+# Create the trend plot with facets and free y-axis
+ggplot(plot_data, aes(x = time_numeric, y = HTS_TST_N, color = age_group)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) + 
+  scale_y_continuous(
+    labels = comma_format()
+  ) +  
+  scale_color_manual(
+    values = age_group_colors,
+    name = "Age Group"
+  ) +
+  labs(
+    title = "Trends in HTS_TST Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "HTS_TST",
+    caption = "Source: DATIM OUxIM file\nThe dip in 2023Q4 is due to Nigeria data omitted from that quarter due to data quality issues."
+  ) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  facet_wrap(~ age_group, ncol = 1, scales = "free_y")
+
+
+
+
+### HTS_TST_POS across time --------------------------------------------------------------------
+
+# Data Preparation
+plot_data <- OU_adult_peds_adol_all_df %>%
+  filter(country == "ALL") %>%
+  mutate(
+    time_period = paste(fiscal_year, "Q", quarter),
+    time_numeric = fiscal_year + (as.numeric(quarter) - 1) / 4
+  ) %>%
+  select(age_group, fiscal_year, quarter, time_period, time_numeric, HTS_TST_POS_N) %>%
+  filter(!is.na(HTS_TST_POS_N)) %>%
+  arrange(age_group, time_numeric)
+
+# Define color palette for age groups (OHA Recommended Palette)
+age_group_colors <- c(
+  "peds" = "#15478A",         # Midnight Blue
+  "adolescent" = "#5BB5D5",   # Viking
+  "adult" = "#F36428"          # Sun Kissed
+)
+
+# Create the trend plot with facets and free y-axis
+ggplot(plot_data, aes(x = time_numeric, y = HTS_TST_POS_N, color = age_group)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_x_continuous(
+    breaks = unique(plot_data$time_numeric),
+    labels = unique(plot_data$time_period),
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(
+    labels = comma_format()
+  ) + 
+  scale_color_manual(
+    values = age_group_colors,
+    name = "Age Group"
+  ) +
+  labs(
+    title = "Trends in HTS_TST_POS Over Time",
+    subtitle = "Country: ALL",
+    x = "",
+    y = "HTS_TST_POS_N",
+    caption = "Source: DATIM OUxIM file\nThe dip in 2023Q4 is due to Nigeria data omitted from that quarter due to data quality issues."
+) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  facet_wrap(~ age_group, ncol = 1, scales = "free_y")
+
+
+
+
+```
+
+<br> 
+
+
+## Comparison tables 
+
+```{r tables}
+
+# Define a common style for titles
+title_style <- "color: #2c3e50; font-size:16px; font-weight:bold;"
+
+# 1. Top 5 Peds Countries by Viral Suppression
+top5_vs <- OU_adult_peds_adol_all_df %>%
+  filter(age_group == "peds") %>%
+  group_by(country, fiscal_year, quarter) %>%
+  summarize(VS = mean(Viral_Suppression, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  distinct(country, .keep_all = TRUE) %>%
+  arrange(desc(VS)) %>%
+  head(5)
+
+top5_vs %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'> Countries with Highest Viral Suppression</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Values represent the latest quarterly average Viral Suppression rates.", 
+               notation = "none")
+
+# 2. Peds Improvement in Viral Suppression (Slope)
+peds_vs_slope <- OU_adult_peds_adol_all_df %>%
+  filter(age_group == "peds", fiscal_year >= (max(fiscal_year) - 2), TX_CURR_N > 50) %>%
+  mutate(time_num = fiscal_year + as.numeric(quarter)/4) %>%
+  group_by(country) %>%
+  summarize(slope = coef(lm(Viral_Suppression ~ time_num))[2], .groups = "drop") %>%
+  arrange(desc(slope))
+
+peds_vs_slope %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Peds Improvement in Viral Suppression Over 3 Years (Slope)</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Slopes calculated using linear regression over the last 3 fiscal years.", 
+               notation = "none")
+
+# 3a. Top 5 Peds Countries by MMD_3_month
+top5_mmd <- OU_adult_peds_adol_all_df %>%
+  filter(age_group == "peds", TX_CURR_N > 50) %>%
+  group_by(country, fiscal_year, quarter) %>%
+  summarize(MMD_3 = mean(MMD_3_month, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  distinct(country, .keep_all = TRUE) %>%
+  arrange(desc(MMD_3)) %>%
+  head(5)
+
+top5_mmd %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Countries with Highest MMD (3 + 6 month MMD)</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*MMD_3_month = (MMD_3months + MMD_6month)/(MMD_3months + MMD_6month + MMD_<3month).", 
+               notation = "none")
+
+# 3b. Peds Improvement in MMD_3_month Over 3 Years (Slope)
+peds_mmd_slope <- OU_adult_peds_adol_all_df %>%
+  filter(age_group == "peds", fiscal_year >= (max(fiscal_year) - 2), TX_CURR_N > 50, !is.na(MMD_3_month)) %>%
+  mutate(time_num = fiscal_year + as.numeric(quarter)/4) %>%
+  group_by(country) %>%
+  summarize(slope = coef(lm(MMD_3_month ~ time_num))[2], .groups = "drop") %>%
+  arrange(desc(slope))
+
+peds_mmd_slope %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Peds Improvement in MMD_3_month (Slope)</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Slopes calculated using linear regression over the last 3 fiscal years.", 
+               notation = "none")
+
+# 4. Smallest Peds vs Adult Gap in Viral Suppression
+least_bad_peds <- OU_adult_peds_adol_all_df %>%
+  filter(age_group %in% c("peds", "adult")) %>%
+  group_by(country, age_group) %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(country, age_group, Viral_Suppression) %>%
+  pivot_wider(names_from = age_group, values_from = Viral_Suppression) %>%
+  mutate(gap = abs(peds - adult)) %>%
+  arrange(gap) %>%
+  head(5)
+
+least_bad_peds %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Countries with Smallest Peds vs Adult Gap in Viral Suppression</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Gap represents the absolute difference between Peds and Adult Viral Suppression rates.", 
+               notation = "none")
+
+# 5. Smallest Adolescent vs Adult Gap in Viral Suppression
+least_bad_adol <- OU_adult_peds_adol_all_df %>%
+  filter(age_group %in% c("adolescent", "adult")) %>%
+  group_by(country, age_group) %>%
+  arrange(desc(fiscal_year), desc(as.numeric(quarter))) %>%
+  slice(1) %>%
+  ungroup() %>%
+  select(country, age_group, Viral_Suppression) %>%
+  pivot_wider(names_from = age_group, values_from = Viral_Suppression) %>%
+  mutate(gap = abs(adolescent - adult)) %>%
+  arrange(gap) %>%
+  head(5)
+
+least_bad_adol %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Countries with Smallest Adolescent vs Adult Gap in Viral Suppression</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Gap represents the absolute difference between Adolescent and Adult Viral Suppression rates.", 
+               notation = "none")
+
+# 6. Top 5 Peds Countries by Improvement in Case Finding Over 3 Years 
+top5_case_finding <- OU_adult_peds_adol_all_df %>%
+  filter(age_group == "peds", fiscal_year >= (max(fiscal_year) - 2), TX_CURR_N > 50) %>%
+  mutate(time_num = fiscal_year + as.numeric(quarter)/4,
+         ratio = HTS_TST_POS_N / TX_CURR_N) %>%
+  group_by(country) %>%
+  summarize(slope = coef(lm(ratio ~ time_num))[2], .groups = "drop") %>%
+  arrange(desc(slope)) %>%
+  head(5)
+
+top5_case_finding %>%
+  kable("html", caption = "<span style='color:#2c3e50; font-size:16px; font-weight:bold;'>Countries with Most Improvement in Peds Case Finding (HTS_TST_POS/TX_CURR Ratio)</span>") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"), 
+                position = "left", 
+                font_size = 14) %>%
+  add_footnote("*Slopes calculated using linear regression over the last 3 fiscal years, with TX_CURR as normalizing parameter.", 
+               notation = "none")
+
+```
+
+
+
+
+<br>
+
+Please contact Paul George (pgeorge@usaid.gov) with any comments/concerns/errors/suggestions for improvement for this report.  
