@@ -6,3 +6,6 @@ This folder contains the R code that is used to create the automated reports for
       #3. Run combining the 95s output dfs.R to combine the individual country dataframes into multiple, combined dataframes 
       #4. Run the RMarkdown file to generate the report   ***** this code represents this step *****
              #a. Note, there is a separate R file that runs all the reports at once. 
+
+Disclaimer: The findings, interpretation, and conclusions expressed herein are those of the authors and do not necessarily reflect the views of United States Agency for International Development. 
+All errors remain our own.
